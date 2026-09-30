@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Template: `make install` fills in @BIN@ and @LOG@ with absolute paths,
+     since launchd expands neither ~ nor $HOME. -->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.fitzgeraldweb.agent-usage</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>@BIN@</string>
+		<string>refresh</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StartInterval</key>
+	<integer>300</integer>
+	<!-- Throttled CPU and IO: the token scan reads ~1 GB of transcripts and
+	     nothing is waiting on it. -->
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>StandardOutPath</key>
+	<string>@LOG@</string>
+	<key>StandardErrorPath</key>
+	<string>@LOG@</string>
+</dict>
+</plist>
