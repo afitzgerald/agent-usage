@@ -27,7 +27,7 @@ selftest: build
 # it killed mid-write for an invalid code signature.
 install: build
 	$(BIN) --selftest
-	-launchctl bootout $(DOMAIN)/$(LABEL) 2>/dev/null
+	launchctl bootout $(DOMAIN)/$(LABEL) 2>/dev/null || true
 	mkdir -p $(PREFIX)/bin $(dir $(PLIST)) $(dir $(LOG))
 	cp $(BIN) $(INSTALLED)
 	codesign --force --sign "$(IDENTITY)" --identifier $(LABEL) $(INSTALLED)
@@ -36,7 +36,7 @@ install: build
 	@echo "installed; first run writes $(HOME)/Library/Application Support/AgentUsage/usage.json"
 
 uninstall:
-	-launchctl bootout $(DOMAIN)/$(LABEL) 2>/dev/null
+	launchctl bootout $(DOMAIN)/$(LABEL) 2>/dev/null || true
 	rm -f $(PLIST) $(INSTALLED)
 
 # Runs the installed job now instead of waiting for the next interval.

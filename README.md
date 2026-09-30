@@ -73,7 +73,7 @@ Reading it:
 
 Swift apps can link the `AgentUsageModel` product instead of decoding by hand:
 `Snapshot.load()`, `isStale()`, `windows.headline` / `.carveOuts`,
-`Window.label()`, `TokenCounts.format()`, `Day.label`.
+`QuotaWindow.label()`, `TokenCounts.format()`, `Day.label`.
 
 ## Checks
 

@@ -357,9 +357,9 @@ enum QuotaRefresh {
     /// and an unrecognised `kind` still comes through. Every row is kept,
     /// carve-outs at zero included — which reaches which surface is the app's
     /// call.
-    static func windows(from limits: [UsageResponse.Limit]) -> [Window] {
+    static func windows(from limits: [UsageResponse.Limit]) -> [QuotaWindow] {
         limits.map { limit in
-            Window(
+            QuotaWindow(
                 kind: limit.kind,
                 model: limit.scope?.model?.displayName,
                 percent: Int(limit.percent.rounded()),

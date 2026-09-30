@@ -39,7 +39,7 @@ enum SelfTest {
 
         let now = Date(timeIntervalSince1970: 1_788_500_000)
         func label(_ percent: Int, _ offset: TimeInterval?) -> String {
-            Window(kind: "session", model: nil, percent: percent, resetsAt: offset.map { now.addingTimeInterval($0) })
+            QuotaWindow(kind: "session", model: nil, percent: percent, resetsAt: offset.map { now.addingTimeInterval($0) })
                 .label(now: now)
         }
         precondition(label(30, nil) == "30%")
@@ -262,7 +262,7 @@ enum SelfTest {
         let snapshot = Snapshot(
             generatedAt: now,
             quota: Quota(status: .failed, updatedAt: now, windows: [
-                Window(kind: "weekly_scoped", model: "Opus", percent: 62, resetsAt: now),
+                QuotaWindow(kind: "weekly_scoped", model: "Opus", percent: 62, resetsAt: now),
             ], spend: nil),
             tokens: Tokens(updatedAt: now, windowDays: 30,
                            days: [Day(day: "2026-09-04", usage: TokenCounts(input: 1, requests: 1))],

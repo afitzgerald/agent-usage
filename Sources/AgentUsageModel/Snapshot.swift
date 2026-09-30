@@ -83,12 +83,12 @@ public struct Quota: Codable, Sendable {
     public var status: Status
     /// When `windows` was last fetched. Nil while there are none.
     public var updatedAt: Date?
-    public var windows: [Window]
+    public var windows: [QuotaWindow]
     /// Credit spend past the plan's included usage. Nil on an account with no
     /// credits configured — most of them.
     public var spend: Spend?
 
-    public init(status: Status, updatedAt: Date?, windows: [Window], spend: Spend?) {
+    public init(status: Status, updatedAt: Date?, windows: [QuotaWindow], spend: Spend?) {
         self.status = status
         self.updatedAt = updatedAt
         self.windows = windows
@@ -96,7 +96,7 @@ public struct Quota: Codable, Sendable {
     }
 }
 
-public struct Window: Codable, Sendable, Identifiable {
+public struct QuotaWindow: Codable, Sendable, Identifiable {
     /// The server's `kind`: "session", "weekly_all", "weekly_scoped", or one
     /// this build has never heard of.
     public var kind: String
@@ -144,11 +144,11 @@ public struct Window: Codable, Sendable, Identifiable {
     }
 }
 
-extension Array where Element == Window {
+extension Array where Element == QuotaWindow {
     /// `headline` and `carveOuts` partition the array exactly, so nothing is
     /// shown twice and nothing is dropped.
-    public var headline: [Window] { filter(\.isHeadline) }
-    public var carveOuts: [Window] { filter { !$0.isHeadline } }
+    public var headline: [QuotaWindow] { filter(\.isHeadline) }
+    public var carveOuts: [QuotaWindow] { filter { !$0.isHeadline } }
 }
 
 /// Decoded straight from the API (snake_case there, camelCase in the file).
