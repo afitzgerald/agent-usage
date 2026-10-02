@@ -80,3 +80,8 @@ Swift apps can link the `AgentUsageModel` product instead of decoding by hand:
 ```sh
 make selftest
 ```
+
+## License
+
+MIT, see [LICENSE](LICENSE). Not affiliated with or endorsed by Anthropic. The
+quota endpoint is undocumented and may change without notice.
