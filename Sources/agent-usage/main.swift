@@ -39,7 +39,7 @@ var state = (try? Data(contentsOf: stateURL))
     .flatMap { try? Snapshot.decoder.decode(QuotaRefresh.State.self, from: $0) } ?? QuotaRefresh.State()
 // A snapshot from an unknown schema is treated as no snapshot: the next write
 // replaces it with one this build can stand behind.
-let previous = try? Snapshot.load()
+let previous = (try? Snapshot.load())?.agent(AgentUsage.claude)
 let now = Date()
 
 let quota = await QuotaRefresh.run(previous: previous?.quota, state: &state, now: now)
@@ -48,7 +48,9 @@ let tokens = TokenScan.isDue(previous?.tokens, now: now) ? TokenScan.scan(now: n
 do {
     // Atomic: readers poll this file, and a half-written one would decode as
     // garbage on exactly the read that races the write.
-    try Snapshot.encoder.encode(Snapshot(generatedAt: Date(), quota: quota, tokens: tokens))
+    try Snapshot.encoder.encode(Snapshot(generatedAt: Date(), agents: [
+        AgentUsage(agent: AgentUsage.claude, quota: quota, tokens: tokens),
+    ]))
         .write(to: Snapshot.defaultURL, options: .atomic)
     try Snapshot.encoder.encode(state).write(to: stateURL, options: .atomic)
 } catch {

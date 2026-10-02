@@ -259,24 +259,30 @@ enum SelfTest {
     /// and a schema this build doesn't know has to be refused.
     private static func snapshotFormat() {
         let now = Date(timeIntervalSince1970: 1_788_500_000)
-        let snapshot = Snapshot(
-            generatedAt: now,
-            quota: Quota(status: .failed, updatedAt: now, windows: [
-                QuotaWindow(kind: "weekly_scoped", model: "Opus", percent: 62, resetsAt: now),
-            ], spend: nil),
-            tokens: Tokens(updatedAt: now, windowDays: 30,
-                           days: [Day(day: "2026-09-04", usage: TokenCounts(input: 1, requests: 1))],
-                           models: [ModelUsage(model: "claude-opus-5", usage: TokenCounts(output: 2))])
-        )
+        let snapshot = Snapshot(generatedAt: now, agents: [
+            AgentUsage(
+                agent: AgentUsage.claude,
+                quota: Quota(status: .failed, updatedAt: now, windows: [
+                    QuotaWindow(kind: "weekly_scoped", model: "Opus", percent: 62, resetsAt: now),
+                ], spend: nil),
+                tokens: Tokens(updatedAt: now, windowDays: 30,
+                               days: [Day(day: "2026-09-04", usage: TokenCounts(input: 1, requests: 1))],
+                               models: [ModelUsage(model: "claude-opus-5", usage: TokenCounts(output: 2))])
+            ),
+            AgentUsage(agent: "codex", quota: nil, tokens: nil),
+        ])
         let url = FileManager.default.temporaryDirectory.appending(path: "agent-usage-selftest-\(UUID().uuidString).json")
         defer { try? FileManager.default.removeItem(at: url) }
         try! Snapshot.encoder.encode(snapshot).write(to: url)
 
         let loaded = try! Snapshot.load(from: url)
         precondition(loaded.schema == Snapshot.currentSchema && loaded.generatedAt == now)
-        precondition(loaded.quota?.status == .failed && loaded.quota?.windows.first?.id == "weekly_scopedOpus")
-        precondition(loaded.tokens?.days.first?.usage == TokenCounts(input: 1, requests: 1))
-        precondition(loaded.tokens?.models.first?.usage.output == 2)
+        precondition(loaded.agents.map(\.agent) == [AgentUsage.claude, "codex"])
+        let claude = loaded.agent(AgentUsage.claude)
+        precondition(claude?.quota?.status == .failed && claude?.quota?.windows.first?.id == "weekly_scopedOpus")
+        precondition(claude?.tokens?.days.first?.usage == TokenCounts(input: 1, requests: 1))
+        precondition(claude?.tokens?.models.first?.usage.output == 2)
+        precondition(loaded.agent("codex")?.quota == nil && loaded.agent("missing") == nil)
 
         // Days are plain date strings, so a non-Swift reader needs no calendar.
         let text = try! String(contentsOf: url, encoding: .utf8)
