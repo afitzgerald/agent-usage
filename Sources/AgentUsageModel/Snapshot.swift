@@ -8,19 +8,21 @@ import Foundation
 /// anything bumps it, and `load` refuses a schema it doesn't know rather than
 /// half-decoding one.
 public struct Snapshot: Codable, Sendable {
-    public static let currentSchema = 1
+    public static let currentSchema = 2
 
     public var schema: Int
     public var generatedAt: Date
-    /// Nil only before the first run has finished.
-    public var quota: Quota?
-    public var tokens: Tokens?
+    /// One entry per agent this build tracks, in display order.
+    public var agents: [AgentUsage]
 
-    public init(generatedAt: Date, quota: Quota?, tokens: Tokens?) {
+    public init(generatedAt: Date, agents: [AgentUsage]) {
         self.schema = Self.currentSchema
         self.generatedAt = generatedAt
-        self.quota = quota
-        self.tokens = tokens
+        self.agents = agents
+    }
+
+    public func agent(_ id: String) -> AgentUsage? {
+        agents.first { $0.agent == id }
     }
 
     public static var directory: URL {
@@ -62,18 +64,40 @@ public struct Snapshot: Codable, Sendable {
     }
 }
 
+// MARK: - Agent
+
+public struct AgentUsage: Codable, Sendable, Identifiable {
+    public static let claude = "claude"
+
+    /// "claude", or one this build has never heard of.
+    public var agent: String
+    /// Nil only before the first run has finished, or for an agent with no
+    /// quota to report.
+    public var quota: Quota?
+    public var tokens: Tokens?
+
+    public var id: String { agent }
+
+    public init(agent: String, quota: Quota?, tokens: Tokens?) {
+        self.agent = agent
+        self.quota = quota
+        self.tokens = tokens
+    }
+}
+
 // MARK: - Quota
 
-/// Claude Code's subscription quota, as served by the API — the server's own
+/// An agent's subscription quota, as served by its API — the server's own
 /// percentages, not a local count, so it stays right across machines sharing
 /// one account.
 public struct Quota: Codable, Sendable {
     public enum Status: String, Codable, Sendable {
-        /// No Claude Code credential on this Mac. Nothing to show and nothing
-        /// to complain about.
+        /// No credential for this agent on this Mac. Nothing to show and
+        /// nothing to complain about.
         case idle
         case ok
-        /// Only `claude login` fixes this. `windows` is empty.
+        /// Only signing the agent back in fixes this (`claude login` for
+        /// Claude Code). `windows` is empty.
         case signedOut
         /// Network trouble, or a single rejection that the next run is likely
         /// to recover from. `windows` still holds the last good numbers.
@@ -97,8 +121,8 @@ public struct Quota: Codable, Sendable {
 }
 
 public struct QuotaWindow: Codable, Sendable, Identifiable {
-    /// The server's `kind`: "session", "weekly_all", "weekly_scoped", or one
-    /// this build has never heard of.
+    /// The server's `kind` — Claude's are "session", "weekly_all" and
+    /// "weekly_scoped" — or one this build has never heard of.
     public var kind: String
     /// Set on per-model carve-outs ("Opus", "Fable").
     public var model: String?
@@ -175,8 +199,8 @@ public struct Spend: Codable, Sendable {
 
 // MARK: - Tokens
 
-/// Token counts reconstructed from Claude Code's session logs in
-/// `~/.claude/projects`. Counts only — nothing here is priced.
+/// Token counts reconstructed from an agent's local session logs
+/// (`~/.claude/projects` for Claude Code). Counts only — nothing here is priced.
 public struct Tokens: Codable, Sendable {
     public var updatedAt: Date
     public var windowDays: Int

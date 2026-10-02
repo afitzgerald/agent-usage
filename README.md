@@ -33,38 +33,46 @@ dialog; after that it keeps its own copy.
 
 ```json
 {
-  "schema": 1,
+  "schema": 2,
   "generatedAt": "2026-09-30T17:05:00Z",
-  "quota": {
-    "status": "ok",
-    "updatedAt": "2026-09-30T17:05:00Z",
-    "windows": [
-      { "kind": "session", "percent": 30, "resetsAt": "2026-09-30T20:00:00Z" },
-      { "kind": "weekly_all", "percent": 37, "resetsAt": "2026-10-03T14:00:00Z" },
-      { "kind": "weekly_scoped", "model": "Opus", "percent": 62 }
-    ],
-    "spend": { "used": { "amountMinor": 4265, "currency": "USD", "exponent": 2 }, "enabled": true }
-  },
-  "tokens": {
-    "updatedAt": "2026-09-30T17:00:00Z",
-    "windowDays": 30,
-    "days": [
-      { "day": "2026-09-30", "usage": { "input": 0, "output": 0, "cacheWrite": 0, "cacheRead": 0, "requests": 0 } }
-    ],
-    "models": [
-      { "model": "claude-opus-5-5", "usage": { "input": 0, "output": 0, "cacheWrite": 0, "cacheRead": 0, "requests": 0 } }
-    ]
-  }
+  "agents": [
+    {
+      "agent": "claude",
+      "quota": {
+        "status": "ok",
+        "updatedAt": "2026-09-30T17:05:00Z",
+        "windows": [
+          { "kind": "session", "percent": 30, "resetsAt": "2026-09-30T20:00:00Z" },
+          { "kind": "weekly_all", "percent": 37, "resetsAt": "2026-10-03T14:00:00Z" },
+          { "kind": "weekly_scoped", "model": "Opus", "percent": 62 }
+        ],
+        "spend": { "used": { "amountMinor": 4265, "currency": "USD", "exponent": 2 }, "enabled": true }
+      },
+      "tokens": {
+        "updatedAt": "2026-09-30T17:00:00Z",
+        "windowDays": 30,
+        "days": [
+          { "day": "2026-09-30", "usage": { "input": 0, "output": 0, "cacheWrite": 0, "cacheRead": 0, "requests": 0 } }
+        ],
+        "models": [
+          { "model": "claude-opus-5-5", "usage": { "input": 0, "output": 0, "cacheWrite": 0, "cacheRead": 0, "requests": 0 } }
+        ]
+      }
+    }
+  ]
 }
 ```
 
 Reading it:
 
+- **`agents`** has one entry per tracked agent, keyed by `agent` (only
+  `"claude"` today). Look an agent up by that key, not by position, and skip
+  ones you don't know.
 - **Check `generatedAt`.** More than 15 minutes old means the job isn't
   running — say so rather than showing the numbers as current.
 - **`quota.status`**: `ok`; `failed` (the last good windows are kept); `signedOut`
-  (run `claude login`; windows are empty); `idle` (no Claude Code credential on
-  this Mac).
+  (sign the agent back in, `claude login` for Claude; windows are empty); `idle`
+  (no credential for that agent on this Mac).
 - **`tokens.days`** covers every day in the window, idle days as zeroes. Empty
   means no history at all.
 - **Lead with input + output.** Cache reads are usually most of the total.
@@ -72,7 +80,7 @@ Reading it:
   fields keep it as is.
 
 Swift apps can link the `AgentUsageModel` product instead of decoding by hand:
-`Snapshot.load()`, `isStale()`, `windows.headline` / `.carveOuts`,
+`Snapshot.load()`, `agent(AgentUsage.claude)`, `isStale()`, `windows.headline` / `.carveOuts`,
 `QuotaWindow.label()`, `TokenCounts.format()`, `Day.label`.
 
 ## Checks
