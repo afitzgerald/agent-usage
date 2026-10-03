@@ -1,0 +1,25 @@
+name: Test
+
+# Deploy waits on this run succeeding on main before it tags a release.
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: test-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Selftest
+        run: make selftest
+
+      - name: Release version rules
+        run: ./Scripts/next_version_test.sh

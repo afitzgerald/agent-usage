@@ -1,11 +1,21 @@
 name: Release
 
-# Push a vX.Y.Z tag to ship: builds the signed binary, attaches it to a GitHub
-# release and points the Homebrew formula at it.
+# Builds the signed binary, attaches it to a GitHub release and points the
+# Homebrew formula at it. Deploy dispatches this after every merge to main; a
+# hand-pushed vX.Y.Z tag (e.g. a minor bump) still triggers it directly.
 on:
   push:
     tags:
       - "v*"
+  # Deploy pushes release tags using the default GITHUB_TOKEN, and pushes
+  # authenticated that way don't trigger other workflows (a deliberate GitHub
+  # anti-recursion rule) — so the `push: tags` trigger above never fires for
+  # automated tags. Deploy calls this dispatch instead.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build and release (e.g. v1.2.3)"
+        required: true
 
 permissions:
   contents: write
@@ -14,13 +24,30 @@ jobs:
   release:
     runs-on: macos-26
     steps:
+      # workflow_dispatch can be triggered manually with any string, and
+      # inputs.tag feeds straight into checkout's ref: below — reject anything
+      # that isn't an exact vX.Y.Z tag before it's used as a ref.
+      - name: Validate tag input
+        if: inputs.tag != ''
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::invalid tag input: $TAG (want vX.Y.Z)" >&2
+            exit 1
+          fi
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.ref }}
 
       - name: Resolve version
         id: version
+        env:
+          TAG_REF: ${{ inputs.tag || github.ref_name }}
         run: |
-          echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
-          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG_REF" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG_REF#v}" >> "$GITHUB_OUTPUT"
 
       # Same import as moomux-mac's release.yml: the Developer ID cert into a
       # throwaway keychain that dies with the runner.
