@@ -1,0 +1,121 @@
+name: Release
+
+# Push a vX.Y.Z tag to ship: builds the signed binary, attaches it to a GitHub
+# release and points the Homebrew formula at it.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Resolve version
+        id: version
+        run: |
+          echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      # Same import as moomux-mac's release.yml: the Developer ID cert into a
+      # throwaway keychain that dies with the runner.
+      - name: Import signing certificate
+        env:
+          P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          P12_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          # A stray return in either secret fails only as "passphrase not
+          # correct"; base64 has no whitespace and a password no line break.
+          P12_BASE64=$(printf '%s' "$P12_BASE64" | tr -d ' \t\r\n')
+          P12_PASSWORD=${P12_PASSWORD%%[$'\r\n']*}
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          keychain_password="$(uuidgen)"
+          printf '%s' "$P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$RUNNER_TEMP/cert.p12" -k "$keychain" -P "$P12_PASSWORD" \
+            -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain"
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+
+      # IDENTITY as a substring codesign matches against the one cert just
+      # imported; the Makefile's own lookup needs rg, which the runner lacks.
+      - name: Build and sign
+        run: make dist IDENTITY="Developer ID Application"
+
+      - name: Checksum
+        id: archive
+        run: |
+          name="agent-usage-${{ steps.version.outputs.tag }}.zip"
+          mv dist/agent-usage.zip "$name"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(shasum -a 256 "$name" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.version.outputs.tag }}" "${{ steps.archive.outputs.name }}" \
+            --title "${{ steps.version.outputs.tag }}" --generate-notes
+
+      - name: Publish Homebrew formula
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+          ZIP: ${{ steps.archive.outputs.name }}
+          SHA256: ${{ steps.archive.outputs.sha256 }}
+        run: |
+          # gh as git's credential helper, or the plain `git push` below has
+          # nothing to authenticate with on a headless runner.
+          gh auth setup-git
+
+          rm -rf /tmp/tap
+          gh repo clone afitzgerald/homebrew-agent-usage /tmp/tap
+          mkdir -p /tmp/tap/Formula
+
+          # `service do` is the launchd job `make install` writes by hand:
+          # `brew services start agent-usage` loads it.
+          cat > /tmp/tap/Formula/agent-usage.rb <<EOF
+          class AgentUsage < Formula
+            desc "Tracks Claude Code usage and writes it to a file any app can read"
+            homepage "https://github.com/afitzgerald/agent-usage"
+            url "https://github.com/afitzgerald/agent-usage/releases/download/${TAG}/${ZIP}"
+            version "${VERSION}"
+            sha256 "${SHA256}"
+            license "MIT"
+
+            depends_on macos: :sonoma
+
+            def install
+              bin.install "agent-usage"
+            end
+
+            service do
+              run [opt_bin/"agent-usage", "refresh"]
+              run_type :interval
+              interval 300
+              process_type :background
+              log_path "#{Dir.home}/Library/Logs/agent-usage.log"
+              error_log_path "#{Dir.home}/Library/Logs/agent-usage.log"
+            end
+
+            test do
+              assert_match "selftest: ok", shell_output("#{bin}/agent-usage --selftest")
+            end
+          end
+          EOF
+
+          cd /tmp/tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/agent-usage.rb
+          git commit -m "agent-usage ${TAG}"
+          git push

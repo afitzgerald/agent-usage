@@ -14,7 +14,7 @@ IDENTITY ?= $(shell security find-identity -v -p codesigning 2>/dev/null \
 	| rg -o -m1 'Developer ID Application: [^"]*')
 IDENTITY := $(if $(IDENTITY),$(IDENTITY),-)
 
-.PHONY: build selftest install uninstall run clean
+.PHONY: build selftest install uninstall run dist clean
 
 build:
 	swift build -c release
@@ -43,5 +43,20 @@ uninstall:
 run:
 	launchctl kickstart $(DOMAIN)/$(LABEL)
 
+# The release artifact the Homebrew formula installs: a universal binary signed
+# like `install` signs it, so the Keychain item trusts a brew copy and a make
+# copy alike. Not notarized: brew downloads carry no quarantine flag and launchd
+# never consults Gatekeeper. Runtime + timestamp anyway, so notarizing later is
+# one notarytool call.
+UNIVERSAL := --arch arm64 --arch x86_64
+dist:
+	@[ "$(IDENTITY)" != "-" ] || { echo "dist needs a Developer ID Application cert"; exit 1; }
+	swift build -c release $(UNIVERSAL)
+	rm -rf dist && mkdir dist
+	cp "$$(swift build -c release $(UNIVERSAL) --show-bin-path)/agent-usage" dist/
+	dist/agent-usage --selftest
+	codesign --force --sign "$(IDENTITY)" --options runtime --timestamp --identifier $(LABEL) dist/agent-usage
+	cd dist && zip -q agent-usage.zip agent-usage
+
 clean:
-	rm -rf .build
+	rm -rf .build dist
