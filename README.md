@@ -40,7 +40,7 @@ dialog; after that it keeps its own copy.
 
 ```json
 {
-  "schema": 2,
+  "schema": 3,
   "generatedAt": "2026-09-30T17:05:00Z",
   "agents": [
     {
@@ -49,9 +49,9 @@ dialog; after that it keeps its own copy.
         "status": "ok",
         "updatedAt": "2026-09-30T17:05:00Z",
         "windows": [
-          { "kind": "session", "percent": 30, "resetsAt": "2026-09-30T20:00:00Z" },
-          { "kind": "weekly_all", "percent": 37, "resetsAt": "2026-10-03T14:00:00Z" },
-          { "kind": "weekly_scoped", "model": "Opus", "percent": 62 }
+          { "kind": "session", "percentUsed": 30, "resetsAt": "2026-09-30T20:00:00Z" },
+          { "kind": "weekly_all", "percentUsed": 37, "resetsAt": "2026-10-03T14:00:00Z" },
+          { "kind": "weekly_scoped", "model": "Opus", "percentUsed": 62 }
         ],
         "spend": { "used": { "amountMinor": 4265, "currency": "USD", "exponent": 2 }, "enabled": true }
       },
@@ -80,6 +80,9 @@ Reading it:
 - **`quota.status`**: `ok`; `failed` (the last good windows are kept); `signedOut`
   (sign the agent back in, `claude login` for Claude; windows are empty); `idle`
   (no credential for that agent on this Mac).
+- **`percentUsed`** is how much of a window is used up, not how much is left:
+  `62` means 38% remains. `spend.percent`, when present, is likewise the
+  share of `spend.limit` spent.
 - **`tokens.days`** covers every day in the window, idle days as zeroes. Empty
   means no history at all.
 - **Lead with input + output.** Cache reads are usually most of the total.

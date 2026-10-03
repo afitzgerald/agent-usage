@@ -8,7 +8,7 @@ import Foundation
 /// anything bumps it, and `load` refuses a schema it doesn't know rather than
 /// half-decoding one.
 public struct Snapshot: Codable, Sendable {
-    public static let currentSchema = 2
+    public static let currentSchema = 3
 
     public var schema: Int
     public var generatedAt: Date
@@ -126,16 +126,18 @@ public struct QuotaWindow: Codable, Sendable, Identifiable {
     public var kind: String
     /// Set on per-model carve-outs ("Opus", "Fable").
     public var model: String?
-    public var percent: Int
+    /// How much of the window is used up, not how much is left — the
+    /// server's figure rounded to a whole number, the same one `/usage` shows.
+    public var percentUsed: Int
     public var resetsAt: Date?
 
     /// Folds in the model — two `weekly_scoped` windows share a kind.
     public var id: String { kind + (model ?? "") }
 
-    public init(kind: String, model: String?, percent: Int, resetsAt: Date?) {
+    public init(kind: String, model: String?, percentUsed: Int, resetsAt: Date?) {
         self.kind = kind
         self.model = model
-        self.percent = percent
+        self.percentUsed = percentUsed
         self.resetsAt = resetsAt
     }
 
@@ -155,16 +157,17 @@ public struct QuotaWindow: Codable, Sendable, Identifiable {
         }
     }
 
-    /// Percent plus how long until the window rolls over. An already-elapsed
-    /// reset (the run straddled it, or the clock is skewed) drops the phrase
-    /// rather than rendering a negative countdown.
+    /// Percent used plus how long until the window rolls over. An
+    /// already-elapsed reset (the run straddled it, or the clock is skewed)
+    /// drops the phrase rather than rendering a negative countdown.
     public func label(now: Date = Date()) -> String {
-        guard let resetsAt, resetsAt > now else { return "\(percent)%" }
+        let used = "\(percentUsed)% used"
+        guard let resetsAt, resetsAt > now else { return used }
         let minutes = Int((resetsAt.timeIntervalSince(now) / 60).rounded(.up))
         let (hours, remainder) = (minutes / 60, minutes % 60)
-        if hours >= 24 { return "\(percent)% · resets in \(hours / 24)d \(hours % 24)h" }
-        if hours > 0 { return "\(percent)% · resets in \(hours)h \(remainder)m" }
-        return "\(percent)% · resets in \(remainder)m"
+        if hours >= 24 { return "\(used) · resets in \(hours / 24)d \(hours % 24)h" }
+        if hours > 0 { return "\(used) · resets in \(hours)h \(remainder)m" }
+        return "\(used) · resets in \(remainder)m"
     }
 }
 
@@ -193,6 +196,8 @@ public struct Spend: Codable, Sendable {
 
     public let used: Amount
     public let limit: Amount?
+    /// Share of `limit` spent, not left. Keeps the API's name because this
+    /// struct decodes straight from it.
     public let percent: Int?
     public let enabled: Bool?
 }

@@ -362,7 +362,7 @@ enum QuotaRefresh {
             QuotaWindow(
                 kind: limit.kind,
                 model: limit.scope?.model?.displayName,
-                percent: Int(limit.percent.rounded()),
+                percentUsed: Int(limit.percent.rounded()),
                 resetsAt: limit.resetsAt.flatMap(parseResetDate)
             )
         }
