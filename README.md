@@ -15,6 +15,13 @@ other. Here only `agent-usage` ever holds the credential.
 ## Install
 
 ```sh
+brew install afitzgerald/agent-usage/agent-usage
+brew services start agent-usage
+```
+
+Or from a checkout (use one or the other; both at once runs two jobs):
+
+```sh
 make install     # builds, self-tests, signs, and loads the launchd job
 make run         # refresh now instead of waiting for the next interval
 make uninstall
