@@ -39,16 +39,16 @@ enum SelfTest {
 
         let now = Date(timeIntervalSince1970: 1_788_500_000)
         func label(_ percent: Int, _ offset: TimeInterval?) -> String {
-            QuotaWindow(kind: "session", model: nil, percent: percent, resetsAt: offset.map { now.addingTimeInterval($0) })
+            QuotaWindow(kind: "session", model: nil, percentUsed: percent, resetsAt: offset.map { now.addingTimeInterval($0) })
                 .label(now: now)
         }
-        precondition(label(30, nil) == "30%")
-        precondition(label(30, 45 * 60) == "30% · resets in 45m")
-        precondition(label(30, 2 * 3600 + 15 * 60) == "30% · resets in 2h 15m")
-        precondition(label(38, 50 * 3600) == "38% · resets in 2d 2h", "got \(label(38, 50 * 3600))")
-        // An already-passed reset reads as a bare percentage, not a countdown
+        precondition(label(30, nil) == "30% used")
+        precondition(label(30, 45 * 60) == "30% used · resets in 45m")
+        precondition(label(30, 2 * 3600 + 15 * 60) == "30% used · resets in 2h 15m")
+        precondition(label(38, 50 * 3600) == "38% used · resets in 2d 2h", "got \(label(38, 50 * 3600))")
+        // An already-passed reset reads as the percentage alone, not a countdown
         // past zero.
-        precondition(label(30, -60) == "30%")
+        precondition(label(30, -60) == "30% used")
 
         let fixture = """
         {"limits":[
@@ -74,7 +74,7 @@ enum SelfTest {
         // renders rather than breaking the section.
         precondition(windows.map(\.name) == ["5h", "Week", "Fable", "Opus", "Future window"],
                      "got \(windows.map(\.name))")
-        precondition(windows.map(\.percent) == [30, 37, 0, 62, 5])
+        precondition(windows.map(\.percentUsed) == [30, 37, 0, 62, 5])
         precondition(windows[0].resetsAt == reset)
         // Apps find the two headline windows by these exact strings.
         precondition(windows[0].kind == "session" && windows[1].kind == "weekly_all")
@@ -263,7 +263,7 @@ enum SelfTest {
             AgentUsage(
                 agent: AgentUsage.claude,
                 quota: Quota(status: .failed, updatedAt: now, windows: [
-                    QuotaWindow(kind: "weekly_scoped", model: "Opus", percent: 62, resetsAt: now),
+                    QuotaWindow(kind: "weekly_scoped", model: "Opus", percentUsed: 62, resetsAt: now),
                 ], spend: nil),
                 tokens: Tokens(updatedAt: now, windowDays: 30,
                                days: [Day(day: "2026-09-04", usage: TokenCounts(input: 1, requests: 1))],
@@ -287,6 +287,8 @@ enum SelfTest {
         // Days are plain date strings, so a non-Swift reader needs no calendar.
         let text = try! String(contentsOf: url, encoding: .utf8)
         precondition(text.contains(#""day" : "2026-09-04""#), text)
+        // Spelled out so no reader has to guess used versus remaining.
+        precondition(text.contains(#""percentUsed" : 62"#), text)
 
         precondition(!loaded.isStale(now: now.addingTimeInterval(Snapshot.staleAfter)))
         precondition(loaded.isStale(now: now.addingTimeInterval(Snapshot.staleAfter + 1)))
