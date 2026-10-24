@@ -10,7 +10,9 @@ can read. Apps that display it never touch a credential or a transcript.
 
 It's one process on purpose. Anthropic rotates the OAuth refresh token every
 time it's used, so two apps each renewing their own copy keep invalidating each
-other. Here only `agent-usage` ever holds the credential.
+other. Here only `agent-usage` touches the credential, and it shares Claude
+Code's own rather than keeping a copy: a renewal is written back into Claude
+Code's Keychain item.
 
 ## Install
 
@@ -31,8 +33,8 @@ launchd runs `agent-usage refresh` every 5 minutes. Each run fetches the quota,
 rescans the transcripts if the last scan is 10+ minutes old, writes the file and
 exits. Errors go to `~/Library/Logs/agent-usage.log`.
 
-The first run reads Claude Code's Keychain item, so expect one "allow access"
-dialog; after that it keeps its own copy.
+It reads that item through `/usr/bin/security`, the tool Claude Code stores it
+with, so there is no "allow access" dialog.
 
 ## The file
 
