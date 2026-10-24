@@ -102,9 +102,8 @@ enum SelfTest {
         precondition(money(4265, 2, nil) == "42.65")
     }
 
-    /// Getting this wrong is what makes the Keychain dialog come back: an
-    /// expiry misread as live spends a run on a 401, and one misread as dead
-    /// sends the next run back to Claude Code's item.
+    /// An expiry misread as live spends a run on a 401; one misread as dead
+    /// spends Claude Code's refresh token for nothing.
     private static func credentials() {
         typealias Q = QuotaRefresh
         let now = Date(timeIntervalSince1970: 1_788_500_000)
@@ -116,24 +115,29 @@ enum SelfTest {
         let orphan = Q.Credentials.OAuth(accessToken: "at", refreshToken: nil, expiresAt: (now.timeIntervalSince1970 - 1) * 1000)
         precondition(Q.classify(orphan, now: now) == .expired(refreshToken: nil))
 
-        // Our stored copy round-trips through Claude Code's shape, or the item
-        // we write is one we can't read back.
-        let json = try! JSONEncoder().encode(Q.Credentials(claudeAiOauth: live))
-        let decoded = try! JSONDecoder().decode(Q.Credentials.self, from: json).claudeAiOauth
-        precondition(decoded.map { Q.classify($0, now: now) } == .token("at", refreshToken: "rt"))
+        // A renewal written back replaces the tokens and nothing else — losing
+        // `mcpOAuth` or `scopes` would break Claude Code in ways it can't explain.
+        let stored = #"{"claudeAiOauth":{"accessToken":"old","refreshToken":"old","expiresAt":1,"scopes":["user:inference"]},"mcpOAuth":{"x":1}}"#
+        let patched = try! JSONSerialization.jsonObject(with: Q.patched(Data(stored.utf8), with: live)!) as! [String: Any]
+        let entry = patched["claudeAiOauth"] as! [String: Any]
+        precondition(entry["accessToken"] as? String == "at" && entry["refreshToken"] as? String == "rt")
+        precondition(entry["scopes"] as? [String] == ["user:inference"])
+        precondition((patched["mcpOAuth"] as? [String: Int]) == ["x": 1])
+        // And Claude Code's own decoder still reads it as live.
+        let reread = try! JSONDecoder().decode(Q.Credentials.self, from: Q.patched(Data(stored.utf8), with: live)!).claudeAiOauth!
+        precondition(Q.classify(reread, now: now) == .token("at", refreshToken: "rt"))
 
         // A `+` in a form body decodes as a space, so a token carrying one is
         // renewed with the wrong string and 401s forever.
         let body = Q.formBody(["grant_type": "refresh_token", "refresh_token": "a+b/c=~d_e"])
         precondition(body == "grant_type=refresh_token&refresh_token=a%2Bb%2Fc%3D~d_e", "got \(body)")
 
-        // State survives the trip through state.json, backoff date included.
+        // State survives the trip through state.json.
         var state = Q.State()
         state.renewBeforeUse = true
         state.consecutiveRejections = 1
-        state.notBefore = now
         let restored = try! Snapshot.decoder.decode(Q.State.self, from: Snapshot.encoder.encode(state))
-        precondition(restored.renewBeforeUse && restored.consecutiveRejections == 1 && restored.notBefore == now)
+        precondition(restored.renewBeforeUse && restored.consecutiveRejections == 1)
     }
 
     private static func calendar() {

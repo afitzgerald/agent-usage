@@ -1,31 +1,25 @@
 import AgentUsageModel
 import Foundation
-import Security
 
 /// Claude Code's subscription quota — the 5-hour session window, the weekly
 /// window, and any per-model carve-out — read from the same undocumented OAuth
 /// endpoint the CLI's own `/usage` command uses.
 ///
-/// This process is the only thing on the machine that holds the credential.
-/// That is the point of it being a separate job: Anthropic rotates the refresh
-/// token on every use, so two apps each renewing their own copy would keep
-/// rotating each other's away.
+/// There is exactly one credential on the machine: Claude Code's. Anthropic
+/// rotates the refresh token on every use, so any private copy is a second
+/// holder of the same token, and whichever of the two renews second finds
+/// theirs dead. An earlier build kept such a copy and paid for it with a
+/// Keychain dialog every time Claude Code renewed. So this reads Claude Code's
+/// item fresh each run, and a renewal done here is written straight back into
+/// it — to Claude Code, it's one more of its own sessions.
 ///
-/// Claude Code's Keychain item is read only when our own item has nothing to
-/// offer — normally once ever. What's found there is copied into our item and
-/// renewed from there with the stored refresh token. Claude Code rotates its
-/// item periodically, and a rotated item comes back with an ACL that no longer
-/// trusts us — so reading it on every run means an authorization dialog every
-/// time it rotates.
-///
-/// The cost: renewing here can leave the CLI's own stored refresh token stale.
-/// A credential that's genuinely dead still surfaces as `.signedOut` for
-/// `claude login` to fix, never repaired behind the user's back.
+/// Every Keychain access goes through `/usr/bin/security`, because that is the
+/// tool Claude Code stores its item with, and an item trusts the binary that
+/// created it. Read via Security.framework instead and the item's ACL doesn't
+/// list us, so each rewrite of it means an authorization dialog.
 enum QuotaRefresh {
-    /// What has to survive between runs. The poll loop this came from kept it
-    /// in memory; a launchd job starts fresh every time, so it lives in
-    /// `state.json` beside the snapshot. No secrets — tokens stay in the
-    /// Keychain.
+    /// What has to survive between runs. A launchd job starts fresh every
+    /// time, so it lives in `state.json` beside the snapshot. No secrets.
     struct State: Codable {
         /// The server rejected a token the clock still considers live, so the
         /// stored credential can't be trusted until it's been renewed.
@@ -33,27 +27,13 @@ enum QuotaRefresh {
         /// A single 401 is most often a rotation the next run recovers from;
         /// two in a row means the credential really is dead.
         var consecutiveRejections = 0
-        /// Set once nothing but `claude login` can change the outcome.
-        var notBefore: Date?
     }
 
-    /// Every attempt while signed out walks the credential sources to their
-    /// end, which means reading Claude Code's item — a read we may not be
-    /// authorised for, and an unauthorised one raises a dialog. So this must
-    /// never run at launchd's 5-minute cadence, or the user is prompted every
-    /// 5 minutes forever. Shaved by a minute so launchd's own jitter doesn't
-    /// push it to the run after.
-    static let signedOutBackoff: TimeInterval = 1800 - 60
-
     static func run(previous: Quota?, state: inout State, now: Date) async -> Quota {
-        if let notBefore = state.notBefore, now < notBefore, let previous { return previous }
-        state.notBefore = nil
-
         /// `.failed` deliberately keeps the last good numbers — one dropped
         /// request shouldn't blank anyone's panel. `.signedOut` and `.idle`
         /// clear them: there the figures aren't merely stale but unauthorised.
-        func finish(_ status: Quota.Status, clearing: Bool, backoff: Bool = false) -> Quota {
-            if backoff { state.notBefore = now.addingTimeInterval(signedOutBackoff) }
+        func finish(_ status: Quota.Status, clearing: Bool) -> Quota {
             var quota = previous ?? Quota(status: status, updatedAt: nil, windows: [], spend: nil)
             quota.status = status
             if clearing {
@@ -62,6 +42,16 @@ enum QuotaRefresh {
                 quota.updatedAt = nil
             }
             return quota
+        }
+
+        /// The first rejection stays `.failed` and keeps the numbers up: a
+        /// renewal racing Claude Code's own looks exactly like this, and the
+        /// next run reads whatever Claude Code wrote. Two in a row is a real
+        /// sign-out, for `claude login` to fix.
+        func rejected() -> Quota {
+            state.consecutiveRejections += 1
+            let dead = state.consecutiveRejections >= 2
+            return finish(dead ? .signedOut : .failed, clearing: dead)
         }
 
         var found = readCredential(now: now)
@@ -74,35 +64,23 @@ enum QuotaRefresh {
         case .token(let accessToken, _):
             token = accessToken
         case .expired(let refreshToken):
-            // Renewing costs one request and no dialog, so it's always worth
-            // trying before declaring a sign-out. Without a refresh token only
-            // `claude login` clears it, hence the backoff.
-            guard let refreshToken else { return finish(.signedOut, clearing: true, backoff: true) }
+            // Claude Code renews ahead of expiry while it's in use, so an
+            // expired token here means it's idle and nobody else is about to
+            // spend the refresh token.
+            guard let refreshToken else { return finish(.signedOut, clearing: true) }
             do {
                 token = try await renew(refreshToken: refreshToken).accessToken
                 state.renewBeforeUse = false
             } catch FetchError.unauthorized {
-                // Our stored refresh token is dead — Claude Code renewed and
-                // Anthropic rotated ours away. Its presence is exactly what
-                // makes `readCredential` stop at our own item, so keeping it
-                // would retry this same dead token forever and never look at
-                // Claude Code's live one again. Dropping it reopens the walk;
-                // only if there was nothing to drop is this a real sign-out.
-                if forgetOwnCredential() {
-                    state.renewBeforeUse = false
-                    return finish(.failed, clearing: false)
-                }
-                return finish(.signedOut, clearing: true, backoff: true)
+                return rejected()
             } catch {
                 // Offline, or the token endpoint having a bad day. The
                 // credential may be perfectly good — not a sign-out.
                 return finish(.failed, clearing: false)
             }
         case .missing:
-            // No Claude Code on this Mac, or never signed in. Not an error —
-            // but still worth backing off, because every retry is another
-            // Keychain read.
-            return finish(.idle, clearing: true, backoff: true)
+            // No Claude Code on this Mac, or never signed in. Not an error.
+            return finish(.idle, clearing: true)
         }
 
         do {
@@ -110,15 +88,10 @@ enum QuotaRefresh {
             state.consecutiveRejections = 0
             return Quota(status: .ok, updatedAt: now, windows: windows(from: usage.limits), spend: usage.spend)
         } catch FetchError.unauthorized {
-            // Mark the stored token untrustworthy — the server just disagreed
-            // with its own expiry, so reusing it unchanged would only earn the
-            // same 401. The first rejection stays `.failed` and keeps the
-            // numbers up: a rotation looks exactly like this and the next
-            // run's renewal recovers from it. Two in a row is a real sign-out.
+            // The server just disagreed with the token's own expiry, so
+            // reusing it unchanged would only earn the same 401.
             state.renewBeforeUse = true
-            state.consecutiveRejections += 1
-            let dead = state.consecutiveRejections >= 2
-            return finish(dead ? .signedOut : .failed, clearing: dead, backoff: dead)
+            return rejected()
         } catch {
             return finish(.failed, clearing: false)
         }
@@ -139,8 +112,8 @@ enum QuotaRefresh {
         case token(String, refreshToken: String?)
     }
 
-    /// Claude Code's own on-disk shape, so one coder reads their item, their
-    /// file, and ours.
+    /// Claude Code's own on-disk shape. Only the fields read here — writing
+    /// back goes through `patched`, which keeps the rest.
     struct Credentials: Codable {
         struct OAuth: Codable {
             let accessToken: String
@@ -153,47 +126,22 @@ enum QuotaRefresh {
         let claudeAiOauth: OAuth?
     }
 
-    static let ownKeychainService = "com.fitzgeraldweb.agent-usage.claude-oauth"
+    static let keychainService = "Claude Code-credentials"
+    static let credentialsFile = FileManager.default.homeDirectoryForCurrentUser
+        .appending(path: ".claude/.credentials.json")
 
-    /// Our own Keychain item first, then `~/.claude/.credentials.json`, then
-    /// Claude Code's item — cheapest and quietest first, because the last of
-    /// the three raises an authorization dialog whenever Claude Code has
-    /// rotated it, and reaching it copies what it finds into ours so that
-    /// dialog is a one-off. The file sits in the middle because it's a stale
-    /// mirror on a current install — worth reading for free, never worth
-    /// trusting first.
-    ///
-    /// An expired credential of our own ends the walk. Its refresh token
-    /// revives it without a dialog, so reading further would buy nothing and
-    /// cost one.
+    /// Claude Code's Keychain item, or the file it falls back to where there is
+    /// no Keychain. Never both: on a Mac with the item, the file is a stale
+    /// mirror whose refresh token was rotated away long ago.
     static func readCredential(now: Date = Date()) -> Credential {
-        var sawCredential = false
-        var refreshToken: String?
-        // Closures, not values: evaluating this eagerly would read Claude
-        // Code's item — and raise its dialog — even when our own item already
-        // had a live token.
-        let sources: [(load: () -> Data?, isOurs: Bool)] = [
-            (ownCredentials, true), (fileCredentials, false), (keychainCredentials, false),
-        ]
-        for source in sources {
-            guard let data = source.load(),
-                  let oauth = try? JSONDecoder().decode(Credentials.self, from: data).claudeAiOauth
-            else { continue }
-            sawCredential = true
-            refreshToken = refreshToken ?? oauth.refreshToken
-            if case .token = classify(oauth, now: now) {
-                if !source.isOurs { store(oauth) }
-                return .token(oauth.accessToken, refreshToken: oauth.refreshToken)
-            }
-            // Only our own item earns this shortcut. The file is a known-stale
-            // mirror, so its refresh token may itself have been rotated away.
-            if source.isOurs, refreshToken != nil { break }
-        }
-        return sawCredential ? .expired(refreshToken: refreshToken) : .missing
+        guard let data = keychainCredentials() ?? (try? Data(contentsOf: credentialsFile)),
+              let oauth = try? JSONDecoder().decode(Credentials.self, from: data).claudeAiOauth
+        else { return .missing }
+        return classify(oauth, now: now)
     }
 
     /// Checking expiry here rather than letting the server say so keeps a
-    /// long-dead token (the stale file above) from costing a round trip.
+    /// long-dead token from costing a round trip.
     static func classify(_ oauth: Credentials.OAuth, now: Date) -> Credential {
         guard Date(timeIntervalSince1970: oauth.expiresAt / 1000) > now else {
             return .expired(refreshToken: oauth.refreshToken)
@@ -203,7 +151,8 @@ enum QuotaRefresh {
 
     /// Trades a refresh token for a fresh access token against the same public
     /// OAuth client the CLI uses. The refresh token rotates on use, so the
-    /// result has to be stored or the next renewal has nothing to spend.
+    /// result goes back where it came from or Claude Code is left holding a
+    /// dead one.
     static func renew(refreshToken: String) async throws -> Credentials.OAuth {
         var request = URLRequest(url: URL(string: "https://platform.claude.com/v1/oauth/token")!)
         request.httpMethod = "POST"
@@ -253,57 +202,56 @@ enum QuotaRefresh {
         let expiresIn: TimeInterval
     }
 
-    /// Our own item's ACL trusts us, so reading it back never prompts — as
-    /// long as the binary keeps the same signature, which is why the Makefile
-    /// signs with a Developer ID when there is one.
+    /// Writes a renewal back into whichever of Claude Code's stores it came
+    /// from. Re-read just before writing, so MCP tokens and anything else
+    /// Claude Code changed meanwhile survive.
     private static func store(_ oauth: Credentials.OAuth) {
-        // Never let an older credential overwrite a newer one. Once we've
-        // renewed past what Claude Code last wrote, that copy's refresh token
-        // has been rotated away — writing it back would trade the only
-        // spendable one for a dead one.
-        if let held = ownCredentials().flatMap({ try? JSONDecoder().decode(Credentials.self, from: $0) })?
-            .claudeAiOauth, held.expiresAt >= oauth.expiresAt { return }
-        guard let data = try? JSONEncoder().encode(Credentials(claudeAiOauth: oauth)) else { return }
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: ownKeychainService,
-        ]
-        let update = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
-        guard update == errSecItemNotFound else { return }
-        var insert = query
-        insert[kSecValueData as String] = data
-        SecItemAdd(insert as CFDictionary, nil)
+        if let current = keychainCredentials() {
+            guard let data = patched(current, with: oauth) else { return }
+            // In argv, so briefly visible to this user's own processes —
+            // `security -i` would hide it, but it truncates long lines and
+            // the item runs to 15KB with MCP tokens in it.
+            let hex = data.map { String(format: "%02x", $0) }.joined()
+            _ = security(["add-generic-password", "-U", "-a", NSUserName(), "-s", keychainService, "-X", hex])
+            // A failed write leaves Claude Code holding the refresh token this
+            // renewal just spent — worth a line in the log.
+            if keychainCredentials() != data {
+                FileHandle.standardError.write(Data("agent-usage: couldn't write the renewed credential back\n".utf8))
+            }
+        } else if let current = try? Data(contentsOf: credentialsFile), let data = patched(current, with: oauth) {
+            try? data.write(to: credentialsFile, options: .atomic)
+        }
     }
 
-    /// Returns whether there was an item to remove — the caller distinguishes
-    /// "our copy went stale" from "nothing here works".
-    @discardableResult
-    private static func forgetOwnCredential() -> Bool {
-        SecItemDelete([
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: ownKeychainService,
-        ] as CFDictionary) == errSecSuccess
+    /// Replaces the three token fields and leaves every other key as it was.
+    static func patched(_ stored: Data, with oauth: Credentials.OAuth) -> Data? {
+        guard var root = (try? JSONSerialization.jsonObject(with: stored)) as? [String: Any] else { return nil }
+        var entry = root["claudeAiOauth"] as? [String: Any] ?? [:]
+        entry["accessToken"] = oauth.accessToken
+        entry["refreshToken"] = oauth.refreshToken
+        entry["expiresAt"] = Int64(oauth.expiresAt)
+        root["claudeAiOauth"] = entry
+        return try? JSONSerialization.data(withJSONObject: root)
     }
 
-    private static func ownCredentials() -> Data? { credentialData(service: ownKeychainService) }
-
-    private static func keychainCredentials() -> Data? { credentialData(service: "Claude Code-credentials") }
-
-    private static func credentialData(service: String) -> Data? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
-        var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess else { return nil }
-        return result as? Data
+    private static func keychainCredentials() -> Data? {
+        security(["find-generic-password", "-s", keychainService, "-w"])
+            .map { Data($0.trimmingCharacters(in: .newlines).utf8) }
     }
 
-    private static func fileCredentials() -> Data? {
-        let path = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".claude/.credentials.json")
-        return try? Data(contentsOf: path)
+    /// Runs `/usr/bin/security`, returning stdout on success.
+    private static func security(_ arguments: [String]) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        process.arguments = arguments
+        let stdout = Pipe()
+        process.standardOutput = stdout
+        process.standardError = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return nil }
+        let output = stdout.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return nil }
+        return String(decoding: output, as: UTF8.self)
     }
 
     // MARK: - Fetch
