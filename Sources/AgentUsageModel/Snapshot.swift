@@ -68,6 +68,7 @@ public struct Snapshot: Codable, Sendable {
 
 public struct AgentUsage: Codable, Sendable, Identifiable {
     public static let claude = "claude"
+    public static let codex = "codex"
 
     /// "claude", or one this build has never heard of.
     public var agent: String
@@ -150,7 +151,7 @@ public struct QuotaWindow: Codable, Sendable, Identifiable {
         switch kind {
         case "session": return "5h"
         case "weekly_all": return "Week"
-        case "weekly_scoped": return model ?? "Scoped"
+        case "weekly_scoped", "codex_scoped": return model ?? "Scoped"
         default:
             let words = kind.replacingOccurrences(of: "_", with: " ")
             return words.prefix(1).uppercased() + words.dropFirst()

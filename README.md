@@ -1,12 +1,11 @@
 # agent-usage
 
-Tracks Claude Code usage once per machine and writes it to a file that any app
+Tracks Claude Code and Codex usage once per machine and writes it to a file that any app
 can read. Apps that display it never touch a credential or a transcript.
 
-- **Quota** — the 5-hour, weekly and per-model windows, from the same OAuth
-  endpoint Claude Code's `/usage` uses.
+- **Quota** — 5-hour, weekly and available per-model windows, from each provider’s usage endpoint.
 - **Tokens** — 30 days of input, output and cache tokens per day and per model,
-  counted from `~/.claude/projects`. Counts only, nothing priced.
+  counted from local Claude and Codex session logs. Counts only, nothing priced.
 
 It's one process on purpose. Anthropic rotates the OAuth refresh token every
 time it's used, so two apps each renewing their own copy keep invalidating each
@@ -33,7 +32,14 @@ launchd runs `agent-usage refresh` every 5 minutes. Each run fetches the quota,
 rescans the transcripts if the last scan is 10+ minutes old, writes the file and
 exits. Errors go to `~/Library/Logs/agent-usage.log`.
 
-It reads that item through `/usr/bin/security`, the tool Claude Code stores it
+Codex quota reads `~/.codex/auth.json` (or `$CODEX_HOME/auth.json`) and the
+ChatGPT usage endpoint. Codex owns and renews its credential. API-key-only
+authentication does not provide subscription quota. Codex token history comes
+from `sessions` and `archived_sessions` in that home. Counts use cumulative
+usage deltas; `requests` counts recorded usage changes, not necessarily API
+requests. Forked sessions with an inherited baseline can omit their first event.
+
+It reads the Claude item through `/usr/bin/security`, the tool Claude Code stores it
 with, so there is no "allow access" dialog.
 
 ## The file
@@ -75,12 +81,12 @@ with, so there is no "allow access" dialog.
 Reading it:
 
 - **`agents`** has one entry per tracked agent, keyed by `agent` (only
-  `"claude"` today). Look an agent up by that key, not by position, and skip
+  `"claude"` and `"codex"`). Look an agent up by that key, not by position, and skip
   ones you don't know.
 - **Check `generatedAt`.** More than 15 minutes old means the job isn't
   running — say so rather than showing the numbers as current.
 - **`quota.status`**: `ok`; `failed` (the last good windows are kept); `signedOut`
-  (sign the agent back in, `claude login` for Claude; windows are empty); `idle`
+  (sign the agent back in, `claude login` or `codex login`; windows are empty); `idle`
   (no credential for that agent on this Mac).
 - **`percentUsed`** is how much of a window is used up, not how much is left:
   `62` means 38% remains. `spend.percent`, when present, is likewise the
@@ -92,7 +98,7 @@ Reading it:
   fields keep it as is.
 
 Swift apps can link the `AgentUsageModel` product instead of decoding by hand:
-`Snapshot.load()`, `agent(AgentUsage.claude)`, `isStale()`, `windows.headline` / `.carveOuts`,
+`Snapshot.load()`, `agent(AgentUsage.claude)` or `agent(AgentUsage.codex)`, `isStale()`, `windows.headline` / `.carveOuts`,
 `QuotaWindow.label()`, `TokenCounts.format()`, `Day.label`.
 
 ## Checks
@@ -103,5 +109,5 @@ make selftest
 
 ## License
 
-MIT, see [LICENSE](LICENSE). Not affiliated with or endorsed by Anthropic. The
+MIT, see [LICENSE](LICENSE). Not affiliated with or endorsed by Anthropic or OpenAI. The
 quota endpoint is undocumented and may change without notice.
