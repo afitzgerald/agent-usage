@@ -19,6 +19,7 @@ enum SelfTest {
             print("FAIL: built with -Ounchecked — checks are compiled out, nothing was verified")
             exit(1)
         }
+        codex()
         quotaShaping()
         credentials()
         calendar()
@@ -27,6 +28,38 @@ enum SelfTest {
         snapshotFormat()
         print("selftest: ok")
         exit(0)
+    }
+
+    private static func codex() {
+        let json: [String: Any] = ["rate_limit": [
+            "primary_window": ["used_percent": 23.6, "reset_at": 1_788_500_000],
+            "secondary_window": ["used_percent": 42]
+        ]]
+        let windows = Codex.windows(from: json)!
+        precondition(windows.map(\.kind) == ["session", "weekly_all"])
+        precondition(windows.map(\.percentUsed) == [24, 42])
+        precondition(windows[0].resetsAt == Date(timeIntervalSince1970: 1_788_500_000))
+        precondition(Codex.windows(from: [:]) == nil)
+        let weeklyOnly = Codex.windows(from: ["rate_limit": ["primary_window": ["used_percent": 7, "limit_window_seconds": 604800]]])!
+        precondition(weeklyOnly.first?.kind == "weekly_all")
+
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        let folder = root.appending(path: "sessions")
+        try! FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let now = Date()
+        let stamp = ISO8601DateFormatter().string(from: now)
+        let lines = [
+            #"{"type":"session_meta","payload":{"forked_from_id":"parent"}}"#,
+            #"{"type":"turn_context","payload":{"model":"gpt-test"}}"#,
+            #"{"timestamp":"\#(stamp)","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":800,"output_tokens":50}}}}"#,
+            #"{"timestamp":"\#(stamp)","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1100,"cached_input_tokens":880,"output_tokens":60}}}}"#,
+            #"{"timestamp":"\#(stamp)","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1100,"cached_input_tokens":880,"output_tokens":60}}}}"#
+        ]
+        try! lines.joined(separator: "\n").write(to: folder.appending(path: "rollout.jsonl"), atomically: true, encoding: .utf8)
+        let tokens = CodexScan.scan(root: root, now: now)
+        precondition(tokens.models.count == 1 && tokens.models[0].model == "gpt-test")
+        precondition(tokens.models[0].usage == TokenCounts(input: 20, output: 10, cacheRead: 80, requests: 1))
     }
 
     private static func quotaShaping() {
