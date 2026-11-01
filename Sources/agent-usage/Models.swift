@@ -20,7 +20,10 @@ enum Models {
               let models = config["models"] as? [[String: Any]] else { return nil }
         return models.compactMap { model in
             guard model["hidden"] as? Bool != true, let id = model["id"] as? String else { return nil }
-            return AvailableModel(id: id, name: model["name"] as? String ?? id)
+            let thinking = model["thinking"] as? [String: Any]
+            let levels = (thinking?["effort_options"] as? [[String: Any]])?.compactMap { $0["id"] as? String }
+            return AvailableModel(id: id, name: model["name"] as? String ?? id,
+                                  thinkingLevels: levels?.isEmpty == false ? levels : nil)
         }
     }
 
@@ -32,7 +35,9 @@ enum Models {
               let models = json["models"] as? [[String: Any]] else { return nil }
         return models.compactMap { model in
             guard model["visibility"] as? String != "hide", let id = model["slug"] as? String else { return nil }
-            return AvailableModel(id: id, name: model["display_name"] as? String ?? id)
+            let levels = (model["supported_reasoning_levels"] as? [[String: Any]])?.compactMap { $0["effort"] as? String }
+            return AvailableModel(id: id, name: model["display_name"] as? String ?? id,
+                                  thinkingLevels: levels?.isEmpty == false ? levels : nil)
         }
     }
 }
