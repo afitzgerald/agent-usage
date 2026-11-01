@@ -299,15 +299,24 @@ enum SelfTest {
         try! FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         func catalog(_ fetchedAt: Int, _ id: String) -> String {
-            #"{"fetchedAt":\#(fetchedAt),"catalog":{"config":{"models":[{"id":"\#(id)","name":"New"},{"id":"secret","hidden":true}]}}}"#
+            #"{"fetchedAt":\#(fetchedAt),"catalog":{"config":{"models":[{"id":"\#(id)","name":"New","#
+                + #""thinking":{"type":"effort","effort_options":[{"id":"low"},{"id":"max"}]}},"#
+                + #"{"id":"plain","thinking":{"type":"none"}},{"id":"secret","hidden":true}]}}}"#
         }
         try! catalog(1, "claude-old").write(to: root.appending(path: "a-b-cc.json"), atomically: true, encoding: .utf8)
         try! catalog(2, "claude-new").write(to: root.appending(path: "c-d-cc.json"), atomically: true, encoding: .utf8)
-        precondition(Models.claude(directory: root) == [AvailableModel(id: "claude-new", name: "New")])
+        precondition(Models.claude(directory: root) == [
+            AvailableModel(id: "claude-new", name: "New", thinkingLevels: ["low", "max"]),
+            AvailableModel(id: "plain", name: "plain"),
+        ])
 
-        try! #"{"models":[{"slug":"gpt-a","display_name":"GPT A"},{"slug":"review","visibility":"hide"},{"slug":"gpt-b"}]}"#
+        try! (#"{"models":[{"slug":"gpt-a","display_name":"GPT A","#
+            + #""supported_reasoning_levels":[{"effort":"medium"},{"effort":"ultra"}]},{"slug":"review","visibility":"hide"},{"slug":"gpt-b"}]}"#)
             .write(to: root.appending(path: "models_cache.json"), atomically: true, encoding: .utf8)
-        precondition(Models.codex(home: root) == [AvailableModel(id: "gpt-a", name: "GPT A"), AvailableModel(id: "gpt-b", name: "gpt-b")])
+        precondition(Models.codex(home: root) == [
+            AvailableModel(id: "gpt-a", name: "GPT A", thinkingLevels: ["medium", "ultra"]),
+            AvailableModel(id: "gpt-b", name: "gpt-b"),
+        ])
         precondition(Models.codex(home: root.appending(path: "missing")) == nil)
     }
 
@@ -324,7 +333,7 @@ enum SelfTest {
                 tokens: Tokens(updatedAt: now, windowDays: 30,
                                days: [Day(day: "2026-09-04", usage: TokenCounts(input: 1, requests: 1))],
                                models: [ModelUsage(model: "claude-opus-5", usage: TokenCounts(output: 2))]),
-                models: [AvailableModel(id: "claude-opus-5-5", name: "Opus 5.5")]
+                models: [AvailableModel(id: "claude-opus-5-5", name: "Opus 5.5", thinkingLevels: ["low", "max"])]
             ),
             AgentUsage(agent: "codex", quota: nil, tokens: nil),
         ])
@@ -339,7 +348,7 @@ enum SelfTest {
         precondition(claude?.quota?.status == .failed && claude?.quota?.windows.first?.id == "weekly_scopedOpus")
         precondition(claude?.tokens?.days.first?.usage == TokenCounts(input: 1, requests: 1))
         precondition(claude?.tokens?.models.first?.usage.output == 2)
-        precondition(claude?.models == [AvailableModel(id: "claude-opus-5-5", name: "Opus 5.5")])
+        precondition(claude?.models?.first?.thinkingLevels == ["low", "max"])
         precondition(loaded.agent("codex")?.quota == nil && loaded.agent("codex")?.models == nil && loaded.agent("missing") == nil)
 
         // Days are plain date strings, so a non-Swift reader needs no calendar.

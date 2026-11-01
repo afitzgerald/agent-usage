@@ -76,8 +76,9 @@ with, so there is no "allow access" dialog.
         ]
       },
       "models": [
-        { "id": "claude-opus-5-5", "name": "Opus 5.5" },
-        { "id": "claude-fable-5-1", "name": "Fable 5.1" }
+        { "id": "claude-opus-5-5", "name": "Opus 5.5",
+          "thinkingLevels": ["low", "medium", "high", "xhigh", "max"] },
+        { "id": "claude-haiku-4-5-20251001", "name": "Haiku 4.5" }
       ]
     }
   ]
@@ -101,6 +102,8 @@ Reading it:
   means no history at all.
 - **`models`** lists the agent's current models in its own picker order, hidden ones
   left out. It is absent when the agent hasn't cached a catalog on this Mac.
+  `thinkingLevels` are the model's thinking (reasoning effort) levels, lowest
+  first. It is absent for a model with no such setting.
 - **Lead with input + output.** Cache reads are usually most of the total.
 - **`schema`** only changes when a field is renamed or removed. New optional
   fields keep it as is.
