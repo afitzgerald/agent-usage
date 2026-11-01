@@ -6,6 +6,8 @@ can read. Apps that display it never touch a credential or a transcript.
 - **Quota** — 5-hour, weekly and available per-model windows, from each provider’s usage endpoint.
 - **Tokens** — 30 days of input, output and cache tokens per day and per model,
   counted from local Claude and Codex session logs. Counts only, nothing priced.
+- **Models**: the models each agent currently offers, read from the catalog the agent
+  caches (`~/.claude/cache/model-catalog`, `~/.codex/models_cache.json`).
 
 It's one process on purpose. Anthropic rotates the OAuth refresh token every
 time it's used, so two apps each renewing their own copy keep invalidating each
@@ -72,7 +74,11 @@ with, so there is no "allow access" dialog.
         "models": [
           { "model": "claude-opus-5-5", "usage": { "input": 0, "output": 0, "cacheWrite": 0, "cacheRead": 0, "requests": 0 } }
         ]
-      }
+      },
+      "models": [
+        { "id": "claude-opus-5-5", "name": "Opus 5.5" },
+        { "id": "claude-fable-5-1", "name": "Fable 5.1" }
+      ]
     }
   ]
 }
@@ -93,6 +99,8 @@ Reading it:
   share of `spend.limit` spent.
 - **`tokens.days`** covers every day in the window, idle days as zeroes. Empty
   means no history at all.
+- **`models`** lists the agent's current models in its own picker order, hidden ones
+  left out. It is absent when the agent hasn't cached a catalog on this Mac.
 - **Lead with input + output.** Cache reads are usually most of the total.
 - **`schema`** only changes when a field is renamed or removed. New optional
   fields keep it as is.

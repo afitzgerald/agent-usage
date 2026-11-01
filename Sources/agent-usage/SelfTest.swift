@@ -25,6 +25,7 @@ enum SelfTest {
         calendar()
         tokenCounting()
         scan()
+        models()
         snapshotFormat()
         print("selftest: ok")
         exit(0)
@@ -292,6 +293,24 @@ enum SelfTest {
         precondition(TokenScan.isDue(result, now: now.addingTimeInterval(600)))
     }
 
+    /// Picks the newest Claude catalog and drops hidden entries from both.
+    private static func models() {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try! FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        func catalog(_ fetchedAt: Int, _ id: String) -> String {
+            #"{"fetchedAt":\#(fetchedAt),"catalog":{"config":{"models":[{"id":"\#(id)","name":"New"},{"id":"secret","hidden":true}]}}}"#
+        }
+        try! catalog(1, "claude-old").write(to: root.appending(path: "a-b-cc.json"), atomically: true, encoding: .utf8)
+        try! catalog(2, "claude-new").write(to: root.appending(path: "c-d-cc.json"), atomically: true, encoding: .utf8)
+        precondition(Models.claude(directory: root) == [AvailableModel(id: "claude-new", name: "New")])
+
+        try! #"{"models":[{"slug":"gpt-a","display_name":"GPT A"},{"slug":"review","visibility":"hide"},{"slug":"gpt-b"}]}"#
+            .write(to: root.appending(path: "models_cache.json"), atomically: true, encoding: .utf8)
+        precondition(Models.codex(home: root) == [AvailableModel(id: "gpt-a", name: "GPT A"), AvailableModel(id: "gpt-b", name: "gpt-b")])
+        precondition(Models.codex(home: root.appending(path: "missing")) == nil)
+    }
+
     /// The file is the contract with every app — a round trip has to be exact,
     /// and a schema this build doesn't know has to be refused.
     private static func snapshotFormat() {
@@ -304,7 +323,8 @@ enum SelfTest {
                 ], spend: nil),
                 tokens: Tokens(updatedAt: now, windowDays: 30,
                                days: [Day(day: "2026-09-04", usage: TokenCounts(input: 1, requests: 1))],
-                               models: [ModelUsage(model: "claude-opus-5", usage: TokenCounts(output: 2))])
+                               models: [ModelUsage(model: "claude-opus-5", usage: TokenCounts(output: 2))]),
+                models: [AvailableModel(id: "claude-opus-5-5", name: "Opus 5.5")]
             ),
             AgentUsage(agent: "codex", quota: nil, tokens: nil),
         ])
@@ -319,7 +339,8 @@ enum SelfTest {
         precondition(claude?.quota?.status == .failed && claude?.quota?.windows.first?.id == "weekly_scopedOpus")
         precondition(claude?.tokens?.days.first?.usage == TokenCounts(input: 1, requests: 1))
         precondition(claude?.tokens?.models.first?.usage.output == 2)
-        precondition(loaded.agent("codex")?.quota == nil && loaded.agent("missing") == nil)
+        precondition(claude?.models == [AvailableModel(id: "claude-opus-5-5", name: "Opus 5.5")])
+        precondition(loaded.agent("codex")?.quota == nil && loaded.agent("codex")?.models == nil && loaded.agent("missing") == nil)
 
         // Days are plain date strings, so a non-Swift reader needs no calendar.
         let text = try! String(contentsOf: url, encoding: .utf8)
