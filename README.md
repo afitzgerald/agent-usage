@@ -74,12 +74,7 @@ with, so there is no "allow access" dialog.
         "models": [
           { "model": "claude-opus-5-5", "usage": { "input": 0, "output": 0, "cacheWrite": 0, "cacheRead": 0, "requests": 0 } }
         ]
-      },
-      "models": [
-        { "id": "claude-opus-5-5", "name": "Opus 5.5",
-          "thinkingLevels": ["low", "medium", "high", "xhigh", "max"] },
-        { "id": "claude-haiku-4-5-20251001", "name": "Haiku 4.5" }
-      ]
+      }
     }
   ]
 }
@@ -100,17 +95,42 @@ Reading it:
   share of `spend.limit` spent.
 - **`tokens.days`** covers every day in the window, idle days as zeroes. Empty
   means no history at all.
-- **`models`** lists the agent's current models in its own picker order, hidden ones
-  left out. It is absent when the agent hasn't cached a catalog on this Mac.
-  `thinkingLevels` are the model's thinking (reasoning effort) levels, lowest
-  first. It is absent for a model with no such setting.
 - **Lead with input + output.** Cache reads are usually most of the total.
 - **`schema`** only changes when a field is renamed or removed. New optional
   fields keep it as is.
 
+### Models
+
+`models.json`, next to `usage.json`, holds the models each agent offers. The
+same job writes it, but only about once an hour, since models change rarely:
+
+```json
+{
+  "schema": 1,
+  "generatedAt": "2026-09-30T17:05:00Z",
+  "agents": [
+    {
+      "agent": "claude",
+      "models": [
+        { "id": "claude-opus-5-5", "name": "Opus 5.5",
+          "thinkingLevels": ["low", "medium", "high", "xhigh", "max"] },
+        { "id": "claude-haiku-4-5-20251001", "name": "Haiku 4.5" }
+      ]
+    }
+  ]
+}
+```
+
+- **`agents`** uses the same `agent` keys as `usage.json`. An agent is absent
+  when it hasn't cached a catalog on this Mac.
+- **`models`** is in the agent's own picker order, hidden ones left out.
+- **`thinkingLevels`** are the model's thinking (reasoning effort) levels, lowest
+  first. It is absent for a model with no such setting.
+- **`schema`** follows the same rule as `usage.json`'s, counted separately.
+
 Swift apps can link the `AgentUsageModel` product instead of decoding by hand:
 `Snapshot.load()`, `agent(AgentUsage.claude)` or `agent(AgentUsage.codex)`, `isStale()`, `windows.headline` / `.carveOuts`,
-`QuotaWindow.label()`, `TokenCounts.format()`, `Day.label`.
+`QuotaWindow.label()`, `TokenCounts.format()`, `Day.label`, and `ModelCatalog.load()` for `models.json`.
 
 ## Checks
 

@@ -76,21 +76,64 @@ public struct AgentUsage: Codable, Sendable, Identifiable {
     /// quota to report.
     public var quota: Quota?
     public var tokens: Tokens?
-    /// The models the agent currently offers this account, in its own picker
-    /// order. Nil when the agent hasn't cached a catalog on this Mac.
-    public var models: [AvailableModel]?
 
     public var id: String { agent }
 
-    public init(agent: String, quota: Quota?, tokens: Tokens?, models: [AvailableModel]? = nil) {
+    public init(agent: String, quota: Quota?, tokens: Tokens?) {
         self.agent = agent
         self.quota = quota
         self.tokens = tokens
-        self.models = models
     }
 }
 
 // MARK: - Models
+
+/// `models.json`, next to `usage.json` — the models each agent offers and
+/// their thinking levels. Kept apart because it is reference data, not usage:
+/// it changes when an agent ships a model, not every run.
+///
+/// Same rules as `Snapshot`: an optional field keeps `schema`, anything else
+/// bumps it, and `load` refuses a schema it doesn't know.
+public struct ModelCatalog: Codable, Sendable {
+    public static let currentSchema = 1
+
+    public var schema: Int
+    public var generatedAt: Date
+    /// One entry per agent that has cached a catalog on this Mac.
+    public var agents: [AgentModels]
+
+    public init(generatedAt: Date, agents: [AgentModels]) {
+        self.schema = Self.currentSchema
+        self.generatedAt = generatedAt
+        self.agents = agents
+    }
+
+    public func agent(_ id: String) -> AgentModels? {
+        agents.first { $0.agent == id }
+    }
+
+    public static var defaultURL: URL { Snapshot.directory.appending(path: "models.json") }
+
+    public static func load(from url: URL = defaultURL) throws -> ModelCatalog {
+        let catalog = try Snapshot.decoder.decode(ModelCatalog.self, from: Data(contentsOf: url))
+        guard catalog.schema == currentSchema else { throw Snapshot.SchemaError(found: catalog.schema) }
+        return catalog
+    }
+}
+
+public struct AgentModels: Codable, Sendable, Identifiable {
+    /// Same key as `AgentUsage.agent`.
+    public var agent: String
+    /// In the agent's own picker order, hidden ones left out.
+    public var models: [AvailableModel]
+
+    public var id: String { agent }
+
+    public init(agent: String, models: [AvailableModel]) {
+        self.agent = agent
+        self.models = models
+    }
+}
 
 public struct AvailableModel: Codable, Sendable, Identifiable, Equatable {
     /// The ID the agent sends to its API — "claude-opus-5-5", "gpt-6.1-sol".
