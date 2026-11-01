@@ -5,6 +5,23 @@ import Foundation
 /// fetches and caches. No request and no credential of our own: the agent
 /// already asked its server, with its own account, and keeps the answer fresh.
 enum Models {
+    /// Hourly: models change when an agent ships one, not between runs.
+    /// Shaved by a minute so launchd's jitter doesn't skip a run.
+    static let refreshInterval: TimeInterval = 3600 - 60
+
+    /// Nil, or a file this build can't read, is due at once.
+    static func isDue(_ previous: ModelCatalog?, now: Date) -> Bool {
+        guard let previous else { return true }
+        return now.timeIntervalSince(previous.generatedAt) >= refreshInterval
+    }
+
+    static func catalog(now: Date) -> ModelCatalog {
+        ModelCatalog(generatedAt: now, agents: [
+            claude().map { AgentModels(agent: AgentUsage.claude, models: $0) },
+            codex().map { AgentModels(agent: AgentUsage.codex, models: $0) },
+        ].compactMap { $0 })
+    }
+
     /// `~/.claude/cache/model-catalog/<account>-<org>-cc.json`. One file per
     /// signed-in account, so the most recently fetched one wins.
     static func claude(directory: URL = FileManager.default.homeDirectoryForCurrentUser

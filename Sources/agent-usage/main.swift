@@ -53,10 +53,13 @@ do {
     // Atomic: readers poll this file, and a half-written one would decode as
     // garbage on exactly the read that races the write.
     try Snapshot.encoder.encode(Snapshot(generatedAt: Date(), agents: [
-        AgentUsage(agent: AgentUsage.claude, quota: quota, tokens: tokens, models: Models.claude()),
-        AgentUsage(agent: AgentUsage.codex, quota: codexQuota, tokens: codexTokens, models: Models.codex()),
+        AgentUsage(agent: AgentUsage.claude, quota: quota, tokens: tokens),
+        AgentUsage(agent: AgentUsage.codex, quota: codexQuota, tokens: codexTokens),
     ]))
         .write(to: Snapshot.defaultURL, options: .atomic)
+    if Models.isDue(try? ModelCatalog.load(), now: now) {
+        try Snapshot.encoder.encode(Models.catalog(now: now)).write(to: ModelCatalog.defaultURL, options: .atomic)
+    }
     try Snapshot.encoder.encode(state).write(to: stateURL, options: .atomic)
 } catch {
     fail("can't write to \(directory.path): \(error)")

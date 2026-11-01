@@ -318,6 +318,12 @@ enum SelfTest {
             AvailableModel(id: "gpt-b", name: "gpt-b"),
         ])
         precondition(Models.codex(home: root.appending(path: "missing")) == nil)
+
+        let now = Date(timeIntervalSince1970: 1_788_500_000)
+        let written = ModelCatalog(generatedAt: now, agents: [])
+        precondition(Models.isDue(nil, now: now))
+        precondition(!Models.isDue(written, now: now.addingTimeInterval(1800)))
+        precondition(Models.isDue(written, now: now.addingTimeInterval(3600)))
     }
 
     /// The file is the contract with every app — a round trip has to be exact,
@@ -332,8 +338,7 @@ enum SelfTest {
                 ], spend: nil),
                 tokens: Tokens(updatedAt: now, windowDays: 30,
                                days: [Day(day: "2026-09-04", usage: TokenCounts(input: 1, requests: 1))],
-                               models: [ModelUsage(model: "claude-opus-5", usage: TokenCounts(output: 2))]),
-                models: [AvailableModel(id: "claude-opus-5-5", name: "Opus 5.5", thinkingLevels: ["low", "max"])]
+                               models: [ModelUsage(model: "claude-opus-5", usage: TokenCounts(output: 2))])
             ),
             AgentUsage(agent: "codex", quota: nil, tokens: nil),
         ])
@@ -348,8 +353,7 @@ enum SelfTest {
         precondition(claude?.quota?.status == .failed && claude?.quota?.windows.first?.id == "weekly_scopedOpus")
         precondition(claude?.tokens?.days.first?.usage == TokenCounts(input: 1, requests: 1))
         precondition(claude?.tokens?.models.first?.usage.output == 2)
-        precondition(claude?.models?.first?.thinkingLevels == ["low", "max"])
-        precondition(loaded.agent("codex")?.quota == nil && loaded.agent("codex")?.models == nil && loaded.agent("missing") == nil)
+        precondition(loaded.agent("codex")?.quota == nil && loaded.agent("missing") == nil)
 
         // Days are plain date strings, so a non-Swift reader needs no calendar.
         let text = try! String(contentsOf: url, encoding: .utf8)
@@ -371,5 +375,17 @@ enum SelfTest {
         } catch {
             preconditionFailure("wrong error: \(error)")
         }
+
+        // models.json follows the same rules in its own file.
+        var catalog = ModelCatalog(generatedAt: now, agents: [
+            AgentModels(agent: AgentUsage.claude, models: [AvailableModel(id: "claude-opus-5-5", name: "Opus 5.5", thinkingLevels: ["low", "max"])]),
+        ])
+        try! Snapshot.encoder.encode(catalog).write(to: url)
+        let models = try! ModelCatalog.load(from: url)
+        precondition(models.generatedAt == now && models.agent(AgentUsage.claude)?.models.first?.thinkingLevels == ["low", "max"])
+        precondition(models.agent(AgentUsage.codex) == nil)
+        catalog.schema = ModelCatalog.currentSchema + 1
+        try! Snapshot.encoder.encode(catalog).write(to: url)
+        precondition((try? ModelCatalog.load(from: url)) == nil)
     }
 }
