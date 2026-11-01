@@ -76,13 +76,31 @@ public struct AgentUsage: Codable, Sendable, Identifiable {
     /// quota to report.
     public var quota: Quota?
     public var tokens: Tokens?
+    /// The models the agent currently offers this account, in its own picker
+    /// order. Nil when the agent hasn't cached a catalog on this Mac.
+    public var models: [AvailableModel]?
 
     public var id: String { agent }
 
-    public init(agent: String, quota: Quota?, tokens: Tokens?) {
+    public init(agent: String, quota: Quota?, tokens: Tokens?, models: [AvailableModel]? = nil) {
         self.agent = agent
         self.quota = quota
         self.tokens = tokens
+        self.models = models
+    }
+}
+
+// MARK: - Models
+
+public struct AvailableModel: Codable, Sendable, Identifiable, Equatable {
+    /// The ID the agent sends to its API — "claude-opus-5-5", "gpt-6.1-sol".
+    public var id: String
+    /// What the agent's model picker shows — "Opus 5.5".
+    public var name: String
+
+    public init(id: String, name: String) {
+        self.id = id
+        self.name = name
     }
 }
 
