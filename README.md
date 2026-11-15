@@ -31,8 +31,11 @@ make uninstall
 ```
 
 launchd runs `agent-usage refresh` every 5 minutes. Each run fetches the quota,
-rescans the transcripts if the last scan is 10+ minutes old, writes the file and
-exits. Errors go to `~/Library/Logs/agent-usage.log`.
+counts the transcript lines written since the last run, writes the file and
+exits. Scan progress is kept in `claude-scan.json` and `codex-scan.json` next
+to `usage.json`; without them the next run recounts every log from scratch,
+which takes seconds of CPU. `agent-usage refresh --scan` forces that recount.
+Errors go to `~/Library/Logs/agent-usage.log`.
 
 Codex quota reads `~/.codex/auth.json` (or `$CODEX_HOME/auth.json`) and the
 ChatGPT usage endpoint. Codex owns and renews its credential. API-key-only

@@ -57,10 +57,25 @@ enum SelfTest {
             #"{"timestamp":"\#(stamp)","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1100,"cached_input_tokens":880,"output_tokens":60}}}}"#,
             #"{"timestamp":"\#(stamp)","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1100,"cached_input_tokens":880,"output_tokens":60}}}}"#
         ]
-        try! lines.joined(separator: "\n").write(to: folder.appending(path: "rollout.jsonl"), atomically: true, encoding: .utf8)
+        let rollout = folder.appending(path: "rollout.jsonl")
+        try! lines.joined(separator: "\n").write(to: rollout, atomically: true, encoding: .utf8)
         let tokens = CodexScan.scan(root: root, now: now)
         precondition(tokens.models.count == 1 && tokens.models[0].model == "gpt-test")
         precondition(tokens.models[0].usage == TokenCounts(input: 20, output: 10, cacheRead: 80, requests: 1))
+
+        // Read in two runs, the delta still measures from the first run's
+        // last total — and the forked rollout's inherited first total is
+        // still skipped.
+        try! (lines[0...2].joined(separator: "\n") + "\n").write(to: rollout, atomically: true, encoding: .utf8)
+        let first = CodexScan.update(nil, root: root, now: now)
+        precondition(first.tokens.models.isEmpty)
+        let handle = try! FileHandle(forWritingTo: rollout)
+        try! handle.seekToEnd()
+        try! handle.write(contentsOf: Data((lines[3...4].joined(separator: "\n") + "\n").utf8))
+        try! handle.close()
+        let second = CodexScan.update(first.state, root: root, now: now)
+        precondition(second.tokens.models.first?.usage == TokenCounts(input: 20, output: 10, cacheRead: 80, requests: 1),
+                     "got \(second.tokens.models)")
     }
 
     private static func quotaShaping() {
@@ -288,9 +303,33 @@ enum SelfTest {
         let empty = TokenScan.scan(root: root.appending(path: "does-not-exist"), now: now)
         precondition(empty.days.isEmpty && empty.models.isEmpty)
 
-        precondition(TokenScan.isDue(nil, now: now))
-        precondition(!TokenScan.isDue(result, now: now.addingTimeInterval(60)))
-        precondition(TokenScan.isDue(result, now: now.addingTimeInterval(600)))
+        // Incremental runs land where a full recount does: appended lines,
+        // a half-written last line, a copy in a new transcript, and a
+        // transcript replaced by a new file.
+        func same(_ a: Tokens, _ b: Tokens) -> Bool {
+            try! Snapshot.encoder.encode(a) == Snapshot.encoder.encode(b)
+        }
+        func append(_ text: String, to name: String) {
+            let handle = try! FileHandle(forWritingTo: project.appending(path: name))
+            try! handle.seekToEnd()
+            try! handle.write(contentsOf: Data(text.utf8))
+            try! handle.close()
+        }
+        var state = TokenScan.update(nil, root: root, now: now).state
+        let late = record("req-f", "claude-opus-5", 0, #""output_tokens":7"#)
+        append(late + "\n" + String(sonnet2.prefix(40)), to: "one.jsonl")
+        try! (opus + "\n" + late + "\n").write(to: project.appending(path: "three.jsonl"), atomically: true, encoding: .utf8)
+        var step = TokenScan.update(state, root: root, now: now)
+        precondition(same(step.tokens, TokenScan.scan(root: root, now: now)))
+        precondition(step.tokens.days.last!.usage.output == 1506, "got \(step.tokens.days.last!.usage)")
+        state = step.state
+
+        let rest = record("req-g", "claude-opus-5", 0, #""output_tokens":3"#)
+        append(String(sonnet2.dropFirst(40)) + "\n" + rest + "\n", to: "one.jsonl")
+        try! (opus + "\n" + unknown + "\n").write(to: project.appending(path: "two.jsonl"), atomically: true, encoding: .utf8)
+        step = TokenScan.update(state, root: root, now: now)
+        precondition(same(step.tokens, TokenScan.scan(root: root, now: now)))
+        precondition(step.tokens.days.last!.usage.output == 1509, "got \(step.tokens.days.last!.usage)")
     }
 
     /// Picks the newest Claude catalog and drops hidden entries from both.
