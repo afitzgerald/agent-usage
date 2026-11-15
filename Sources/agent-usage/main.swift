@@ -2,7 +2,8 @@ import AgentUsageModel
 import Foundation
 
 /// `agent-usage refresh` — one pass, run by launchd every 5 minutes: fetch the
-/// quota, rescan the transcripts if that's due, write `usage.json`, exit.
+/// quota, count what the transcripts gained since the last run (`--scan`
+/// recounts them from scratch), write `usage.json`, exit.
 /// launchd does the scheduling, so there is no loop here.
 
 func fail(_ message: String) -> Never {
@@ -13,7 +14,7 @@ func fail(_ message: String) -> Never {
 let arguments = CommandLine.arguments.dropFirst()
 if arguments.contains("--selftest") { SelfTest.run() }
 guard (arguments.first ?? "refresh") == "refresh" else {
-    FileHandle.standardError.write(Data("usage: agent-usage [refresh | --selftest]\n".utf8))
+    FileHandle.standardError.write(Data("usage: agent-usage [refresh [--scan] | --selftest]\n".utf8))
     exit(2)
 }
 
@@ -43,11 +44,19 @@ let snapshot = try? Snapshot.load()
 let previous = snapshot?.agent(AgentUsage.claude)
 let previousCodex = snapshot?.agent(AgentUsage.codex)
 let now = Date()
+let forceScan = arguments.contains("--scan")
 
 let quota = await QuotaRefresh.run(previous: previous?.quota, state: &state, now: now)
 let codexQuota = await Codex.quota(previous: previousCodex?.quota, now: now)
-let codexTokens = TokenScan.isDue(previousCodex?.tokens, now: now) ? CodexScan.scan(now: now) : previousCodex?.tokens
-let tokens = TokenScan.isDue(previous?.tokens, now: now) ? TokenScan.scan(now: now) : previous?.tokens
+// Scan progress, not part of the published file. Lost or unreadable is a
+// full recount, so plain JSON with no schema check of its own.
+func loadScanState<T: Decodable>(_ type: T.Type, _ url: URL) -> T? {
+    forceScan ? nil : (try? Data(contentsOf: url)).flatMap { try? JSONDecoder().decode(type, from: $0) }
+}
+let claudeScanURL = directory.appending(path: "claude-scan.json")
+let codexScanURL = directory.appending(path: "codex-scan.json")
+let (tokens, claudeScan) = TokenScan.update(loadScanState(TokenScan.State.self, claudeScanURL), now: now)
+let (codexTokens, codexScan) = CodexScan.update(loadScanState(CodexScan.State.self, codexScanURL), now: now)
 
 do {
     // Atomic: readers poll this file, and a half-written one would decode as
@@ -61,6 +70,10 @@ do {
         try Snapshot.encoder.encode(Models.catalog(now: now)).write(to: ModelCatalog.defaultURL, options: .atomic)
     }
     try Snapshot.encoder.encode(state).write(to: stateURL, options: .atomic)
+    // After usage.json: a run that dies between the two writes re-reads the
+    // same appends next time from the older state, and counts them once.
+    try JSONEncoder().encode(claudeScan).write(to: claudeScanURL, options: .atomic)
+    try JSONEncoder().encode(codexScan).write(to: codexScanURL, options: .atomic)
 } catch {
     fail("can't write to \(directory.path): \(error)")
 }
