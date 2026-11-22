@@ -29,6 +29,17 @@ enum QuotaRefresh {
         var consecutiveRejections = 0
     }
 
+    /// Runs come every minute; the quota is fetched every 5 (shaved for
+    /// launchd jitter), or sooner once a minute has passed since a reset the
+    /// last fetch predates. Nothing fetched yet is due at once.
+    static func isDue(_ previous: Quota?, now: Date, maxAge: TimeInterval = 290) -> Bool {
+        guard let updated = previous?.updatedAt else { return true }
+        return now.timeIntervalSince(updated) >= maxAge || previous?.windows.contains {
+            guard let reset = $0.resetsAt else { return false }
+            return updated < reset.addingTimeInterval(60) && reset.addingTimeInterval(60) <= now
+        } == true
+    }
+
     static func run(previous: Quota?, state: inout State, now: Date) async -> Quota {
         /// `.failed` deliberately keeps the last good numbers — one dropped
         /// request shouldn't blank anyone's panel. `.signedOut` and `.idle`
