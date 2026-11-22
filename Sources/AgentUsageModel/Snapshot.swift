@@ -166,23 +166,60 @@ public struct Quota: Codable, Sendable {
         /// Claude Code). `windows` is empty.
         case signedOut
         /// Network trouble, or a single rejection that the next run is likely
-        /// to recover from. `windows` still holds the last good numbers.
+        /// to recover from. The last good quota data is kept.
         case failed
     }
 
     public var status: Status
-    /// When `windows` was last fetched. Nil while there are none.
+    /// When quota was last fetched. Nil before a successful fetch.
     public var updatedAt: Date?
     public var windows: [QuotaWindow]
     /// Credit spend past the plan's included usage. Nil on an account with no
     /// credits configured — most of them.
     public var spend: Spend?
+    /// Banked resets. Nil when the provider did not report an inventory.
+    public var limitResets: LimitResets?
 
-    public init(status: Status, updatedAt: Date?, windows: [QuotaWindow], spend: Spend?) {
+    public init(status: Status, updatedAt: Date?, windows: [QuotaWindow], spend: Spend?, limitResets: LimitResets? = nil) {
         self.status = status
         self.updatedAt = updatedAt
         self.windows = windows
         self.spend = spend
+        self.limitResets = limitResets
+    }
+}
+
+public struct LimitResets: Codable, Sendable {
+    /// Number of resets held, including any that cannot currently be redeemed.
+    public var availableCount: Int
+    /// Number currently redeemable, when the provider reports it.
+    public var redeemableCount: Int?
+    /// Nil when only the counts are available.
+    public var grants: [Grant]?
+    public var cooldownUntil: Date?
+
+    public init(availableCount: Int, redeemableCount: Int?, grants: [Grant]?, cooldownUntil: Date? = nil) {
+        self.availableCount = availableCount
+        self.redeemableCount = redeemableCount
+        self.grants = grants
+        self.cooldownUntil = cooldownUntil
+    }
+
+    public struct Grant: Codable, Sendable {
+        public var name: String
+        public var count: Int
+        public var expiresAt: Date?
+        /// Provider identifiers for quota windows covered by this grant.
+        public var windows: [String]?
+        public var isRedeemable: Bool?
+
+        public init(name: String, count: Int, expiresAt: Date?, windows: [String]? = nil, isRedeemable: Bool? = nil) {
+            self.name = name
+            self.count = count
+            self.expiresAt = expiresAt
+            self.windows = windows
+            self.isRedeemable = isRedeemable
+        }
     }
 }
 

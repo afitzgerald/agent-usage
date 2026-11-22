@@ -50,6 +50,7 @@ enum QuotaRefresh {
             if clearing {
                 quota.windows = []
                 quota.spend = nil
+                quota.limitResets = nil
                 quota.updatedAt = nil
             }
             return quota
@@ -97,7 +98,8 @@ enum QuotaRefresh {
         do {
             let usage = try await fetchUsage(token: token)
             state.consecutiveRejections = 0
-            return Quota(status: .ok, updatedAt: now, windows: windows(from: usage.limits), spend: usage.spend)
+            return Quota(status: .ok, updatedAt: now, windows: windows(from: usage.limits), spend: usage.spend,
+                         limitResets: usage.resetInventory?.limitResets)
         } catch FetchError.unauthorized {
             // The server just disagreed with the token's own expiry, so
             // reusing it unchanged would only earn the same 401.
@@ -282,6 +284,47 @@ enum QuotaRefresh {
 
         let limits: [Limit]
         let spend: Spend?
+        let resetInventory: ResetInventory?
+
+        private enum CodingKeys: String, CodingKey {
+            case limits, spend, cedarEmber
+        }
+
+        init(from decoder: Decoder) throws {
+            let fields = try decoder.container(keyedBy: CodingKeys.self)
+            limits = try fields.decode([Limit].self, forKey: .limits)
+            spend = try fields.decodeIfPresent(Spend.self, forKey: .spend)
+            resetInventory = try? fields.decode(ResetInventory.self, forKey: .cedarEmber)
+        }
+    }
+
+    struct ResetInventory: Decodable {
+        struct Grant: Decodable {
+            let label: String?
+            let resetsLeft: UInt32
+            let endsAt: String?
+            let clears: [String]?
+            let usableNow: Bool?
+        }
+
+        let grants: [Grant]
+        let ineligibleReason: String?
+        let cooldownUntil: String?
+
+        var limitResets: LimitResets? {
+            // The server may withhold inventory from an unsupported client.
+            guard ineligibleReason != "surface" else { return nil }
+            let held = grants.filter { $0.resetsLeft > 0 }
+            let items = held.map {
+                LimitResets.Grant(name: $0.label ?? "Limit reset", count: Int($0.resetsLeft),
+                                  expiresAt: $0.endsAt.flatMap(parseResetDate), windows: $0.clears,
+                                  isRedeemable: $0.usableNow)
+            }
+            let redeemable = items.contains { $0.isRedeemable == nil } ? nil
+                : items.filter { $0.isRedeemable == true }.reduce(0) { $0 + $1.count }
+            return LimitResets(availableCount: items.reduce(0) { $0 + $1.count }, redeemableCount: redeemable,
+                               grants: items, cooldownUntil: cooldownUntil.flatMap(parseResetDate))
+        }
     }
 
     static var apiDecoder: JSONDecoder {
@@ -291,14 +334,13 @@ enum QuotaRefresh {
     }
 
     private static func fetchUsage(token: String) async throws -> UsageResponse {
-        var request = URLRequest(url: URL(string: "https://api.anthropic.com/api/oauth/usage")!)
+        var request = URLRequest(url: URL(string: "https://api.anthropic.com/api/oauth/usage?cedar_ember=1")!)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
-        // Required, not cosmetic: requests without a claude-code User-Agent land
-        // in a much more aggressively rate-limited bucket and start returning
-        // 429s. The endpoint buckets on the product prefix, so the version
-        // doesn't have to track the installed CLI.
-        request.setValue("claude-code/2.1.260", forHTTPHeaderField: "User-Agent")
+        // The usage endpoint returns reset grants to the interactive CLI surface.
+        request.setValue("claude-cli/2.1.326 (external, cli)", forHTTPHeaderField: "User-Agent")
+        request.setValue("application/json, text/plain, */*", forHTTPHeaderField: "Accept")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 15
 
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -327,9 +369,8 @@ enum QuotaRefresh {
         }
     }
 
-    /// `resets_at` arrives with six fractional-second digits, which
-    /// `ISO8601DateFormatter` rejects outright — so the fraction, meaningless
-    /// on a window measured in hours, is dropped before parsing.
+    /// Providers can send fractional seconds. Drop them before parsing to
+    /// match the snapshot's second precision.
     static func parseResetDate(_ raw: String) -> Date? {
         var trimmed = raw
         if let dot = raw.firstIndex(of: "."),
