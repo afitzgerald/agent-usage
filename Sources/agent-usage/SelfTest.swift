@@ -95,6 +95,19 @@ enum SelfTest {
         precondition(label(30, 45 * 60) == "30% used · resets in 45m")
         precondition(label(30, 2 * 3600 + 15 * 60) == "30% used · resets in 2h 15m")
         precondition(label(38, 50 * 3600) == "38% used · resets in 2d 2h", "got \(label(38, 50 * 3600))")
+        func win(_ offset: TimeInterval?) -> QuotaWindow {
+            QuotaWindow(kind: "session", model: nil, percentUsed: 1, resetsAt: offset.map { now.addingTimeInterval($0) })
+        }
+        func quota(age: TimeInterval, resets: TimeInterval?) -> Quota {
+            Quota(status: .ok, updatedAt: now.addingTimeInterval(-age), windows: [
+                QuotaWindow(kind: "session", model: nil, percentUsed: 1, resetsAt: resets.map { now.addingTimeInterval($0) })], spend: nil)
+        }
+        precondition(QuotaRefresh.isDue(nil, now: now))
+        precondition(!QuotaRefresh.isDue(quota(age: 60, resets: 600), now: now))
+        precondition(QuotaRefresh.isDue(quota(age: 300, resets: nil), now: now))
+        precondition(!QuotaRefresh.isDue(quota(age: 120, resets: -30), now: now), "reset under a minute ago")
+        precondition(QuotaRefresh.isDue(quota(age: 120, resets: -60), now: now), "a minute after the reset")
+        precondition(!QuotaRefresh.isDue(quota(age: 10, resets: -120), now: now), "fetched after the reset")
         // An already-passed reset reads as the percentage alone, not a countdown
         // past zero.
         precondition(label(30, -60) == "30% used")

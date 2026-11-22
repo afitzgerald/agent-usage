@@ -1,8 +1,8 @@
 import AgentUsageModel
 import Foundation
 
-/// `agent-usage refresh` — one pass, run by launchd every 5 minutes: fetch the
-/// quota, count what the transcripts gained since the last run (`--scan`
+/// `agent-usage refresh` — one pass, run by launchd every minute: fetch the
+/// quota (when due, see `QuotaRefresh.isDue`), count what the transcripts gained since the last run (`--scan`
 /// recounts them from scratch), write `usage.json`, exit.
 /// launchd does the scheduling, so there is no loop here.
 
@@ -46,8 +46,10 @@ let previousCodex = snapshot?.agent(AgentUsage.codex)
 let now = Date()
 let forceScan = arguments.contains("--scan")
 
-let quota = await QuotaRefresh.run(previous: previous?.quota, state: &state, now: now)
-let codexQuota = await Codex.quota(previous: previousCodex?.quota, now: now)
+let quota = QuotaRefresh.isDue(previous?.quota, now: now) || forceScan
+    ? await QuotaRefresh.run(previous: previous?.quota, state: &state, now: now) : previous?.quota
+let codexQuota = QuotaRefresh.isDue(previousCodex?.quota, now: now) || forceScan
+    ? await Codex.quota(previous: previousCodex?.quota, now: now) : previousCodex?.quota
 // Scan progress, not part of the published file. Lost or unreadable is a
 // full recount, so plain JSON with no schema check of its own.
 func loadScanState<T: Decodable>(_ type: T.Type, _ url: URL) -> T? {

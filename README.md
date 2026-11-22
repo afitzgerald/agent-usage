@@ -30,7 +30,9 @@ make run         # refresh now instead of waiting for the next interval
 make uninstall
 ```
 
-launchd runs `agent-usage refresh` every 5 minutes. Each run fetches the quota,
+launchd runs `agent-usage refresh` every minute. A run fetches the quota every
+5 minutes, or a minute after any window resets, and otherwise keeps the last
+numbers. Every run
 counts the transcript lines written since the last run, writes the file and
 exits. Scan progress is kept in `claude-scan.json` and `codex-scan.json` next
 to `usage.json`; without them the next run recounts every log from scratch,
