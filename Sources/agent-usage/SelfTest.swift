@@ -21,6 +21,7 @@ enum SelfTest {
         }
         codex()
         quotaShaping()
+        limitResets()
         credentials()
         calendar()
         tokenCounting()
@@ -162,6 +163,51 @@ enum SelfTest {
         }
         precondition(money(4265, 0, "JPY") == "JPY 4265", "got \(money(4265, 0, "JPY"))")
         precondition(money(4265, 2, nil) == "42.65")
+    }
+
+    private static func limitResets() {
+        let decoder = QuotaRefresh.apiDecoder
+        func claude(_ inventory: String) -> QuotaRefresh.UsageResponse {
+            let body = #"{"limits":[],"cedar_ember":\#(inventory)}"#
+            return try! decoder.decode(QuotaRefresh.UsageResponse.self, from: Data(body.utf8))
+        }
+        let claudeResets = claude("""
+        {"grants":[
+          {"label":"Full reset","resets_left":2,"clears":["five_hour","seven_day"],"usable_now":true},
+          {"label":"Fable reset","resets_left":1,"ends_at":"2026-09-04T05:59:59.795218+00:00","usable_now":false},
+          {"label":"Already used","resets_left":0,"usable_now":false}
+        ],"cooldown_until":"2026-09-04T05:59:59Z"}
+        """).resetInventory!.limitResets!
+        let expiresAt = Date(timeIntervalSince1970: 1_788_501_599)
+        precondition(claudeResets.availableCount == 3 && claudeResets.redeemableCount == 2)
+        precondition(claudeResets.grants?.map(\.name) == ["Full reset", "Fable reset"])
+        precondition(claudeResets.grants?.first?.windows == ["five_hour", "seven_day"])
+        precondition(claudeResets.grants?.last?.expiresAt == expiresAt && claudeResets.cooldownUntil == expiresAt)
+        precondition(claude(#"{"grants":[]}"#).resetInventory?.limitResets?.availableCount == 0)
+        precondition(claude(#"{"grants":[],"ineligible_reason":"surface"}"#).resetInventory?.limitResets == nil)
+        precondition(claude("null").resetInventory == nil)
+        precondition(claude(#"{"grants":42}"#).resetInventory == nil)
+
+        let summaryJSON = #"{"rate_limit_reset_credits":{"available_count":2,"applicable_available_count":0}}"#
+        let summary = try! decoder.decode(Codex.UsageResetSummary.self, from: Data(summaryJSON.utf8)).rateLimitResetCredits!
+        precondition(summary.limitResets.availableCount == 2 && summary.limitResets.redeemableCount == 0)
+        precondition(summary.limitResets.grants == nil)
+        let detailsJSON = """
+        {"available_count":2,"credits":[
+          {"reset_type":"codex_rate_limits","status":"available","title":"Full reset","expires_at":"2026-09-04T05:59:59.795218Z"},
+          {"reset_type":"codex_rate_limits","status":"used","title":"Used reset"},
+          {"reset_type":"weekly","status":"available","title":null}
+        ]}
+        """
+        let details = try! decoder.decode(Codex.ResetInventory.self, from: Data(detailsJSON.utf8))
+        let codexResets = details.limitResets(summary: summary)
+        precondition(codexResets.availableCount == 2 && codexResets.redeemableCount == 0)
+        precondition(codexResets.grants?.map(\.name) == ["Full reset", "weekly"])
+        precondition(codexResets.grants?.first?.expiresAt == expiresAt)
+        precondition(details.limitResets(summary: nil).redeemableCount == nil)
+        let zero = Codex.UsageResetSummary.Summary(availableCount: 0, applicableAvailableCount: nil)
+        precondition(zero.limitResets.grants?.isEmpty == true)
+        precondition(details.limitResets(summary: zero).redeemableCount == nil)
     }
 
     /// An expiry misread as live spends a run on a 401; one misread as dead
@@ -387,12 +433,12 @@ enum SelfTest {
                 agent: AgentUsage.claude,
                 quota: Quota(status: .failed, updatedAt: now, windows: [
                     QuotaWindow(kind: "weekly_scoped", model: "Opus", percentUsed: 62, resetsAt: now),
-                ], spend: nil),
+                ], spend: nil, limitResets: LimitResets(availableCount: 0, redeemableCount: 0, grants: [])),
                 tokens: Tokens(updatedAt: now, windowDays: 30,
                                days: [Day(day: "2026-09-04", usage: TokenCounts(input: 1, requests: 1))],
                                models: [ModelUsage(model: "claude-opus-5", usage: TokenCounts(output: 2))])
             ),
-            AgentUsage(agent: "codex", quota: nil, tokens: nil),
+            AgentUsage(agent: "codex", quota: Quota(status: .idle, updatedAt: nil, windows: [], spend: nil), tokens: nil),
         ])
         let url = FileManager.default.temporaryDirectory.appending(path: "agent-usage-selftest-\(UUID().uuidString).json")
         defer { try? FileManager.default.removeItem(at: url) }
@@ -405,7 +451,8 @@ enum SelfTest {
         precondition(claude?.quota?.status == .failed && claude?.quota?.windows.first?.id == "weekly_scopedOpus")
         precondition(claude?.tokens?.days.first?.usage == TokenCounts(input: 1, requests: 1))
         precondition(claude?.tokens?.models.first?.usage.output == 2)
-        precondition(loaded.agent("codex")?.quota == nil && loaded.agent("missing") == nil)
+        precondition(claude?.quota?.limitResets?.availableCount == 0)
+        precondition(loaded.agent("codex")?.quota?.limitResets == nil && loaded.agent("missing") == nil)
 
         // Days are plain date strings, so a non-Swift reader needs no calendar.
         let text = try! String(contentsOf: url, encoding: .utf8)

@@ -4,6 +4,7 @@ Tracks Claude Code and Codex usage once per machine and writes it to a file that
 can read. Apps that display it never touch a credential or a transcript.
 
 - **Quota** — 5-hour, weekly and available per-model windows, from each provider’s usage endpoint.
+- **Banked resets** — how many each agent holds, how many it can currently redeem, and grant details when available.
 - **Tokens** — 30 days of input, output and cache tokens per day and per model,
   counted from local Claude and Codex session logs. Counts only, nothing priced.
 - **Models**: the models each agent currently offers, read from the catalog the agent
@@ -68,7 +69,15 @@ with, so there is no "allow access" dialog.
           { "kind": "weekly_all", "percentUsed": 37, "resetsAt": "2026-10-03T14:00:00Z" },
           { "kind": "weekly_scoped", "model": "Opus", "percentUsed": 62 }
         ],
-        "spend": { "used": { "amountMinor": 4265, "currency": "USD", "exponent": 2 }, "enabled": true }
+        "spend": { "used": { "amountMinor": 4265, "currency": "USD", "exponent": 2 }, "enabled": true },
+        "limitResets": {
+          "availableCount": 1,
+          "redeemableCount": 1,
+          "grants": [
+            { "name": "Full reset", "count": 1, "expiresAt": "2026-10-22T22:00:00Z",
+              "windows": ["five_hour", "seven_day"], "isRedeemable": true }
+          ]
+        }
       },
       "tokens": {
         "updatedAt": "2026-09-30T17:00:00Z",
@@ -92,12 +101,18 @@ Reading it:
   ones you don't know.
 - **Check `generatedAt`.** More than 15 minutes old means the job isn't
   running — say so rather than showing the numbers as current.
-- **`quota.status`**: `ok`; `failed` (the last good windows are kept); `signedOut`
+- **`quota.status`**: `ok`; `failed` (the last good quota data is kept); `signedOut`
   (sign the agent back in, `claude login` or `codex login`; windows are empty); `idle`
   (no credential for that agent on this Mac).
 - **`percentUsed`** is how much of a window is used up, not how much is left:
   `62` means 38% remains. `spend.percent`, when present, is likewise the
   share of `spend.limit` spent.
+- **`quota.limitResets`** is present when the provider reports banked resets.
+  `availableCount` counts all resets held. Zero means the provider reported none.
+  `redeemableCount`, when present, counts those usable at the last quota fetch.
+  `grants` lists names, counts and any reported expiration dates. Claude can also
+  report covered window IDs, per-grant eligibility and an account cooldown.
+  If the Codex details request fails, its usage endpoint can still supply the counts.
 - **`tokens.days`** covers every day in the window, idle days as zeroes. Empty
   means no history at all.
 - **Lead with input + output.** Cache reads are usually most of the total.

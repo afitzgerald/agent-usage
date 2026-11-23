@@ -35,8 +35,58 @@ enum Codex {
             guard http.statusCode == 200,
                   let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let windows = windows(from: json) else { return result(.failed, keep: true) }
-            return Quota(status: .ok, updatedAt: now, windows: windows, spend: nil)
+            let summary = try? QuotaRefresh.apiDecoder.decode(UsageResetSummary.self, from: data).rateLimitResetCredits
+            var limitResets = summary?.limitResets
+            if summary?.availableCount != 0, let inventory = await resetInventory(using: request) {
+                limitResets = inventory.limitResets(summary: summary)
+            }
+            return Quota(status: .ok, updatedAt: now, windows: windows, spend: nil, limitResets: limitResets)
         } catch { return result(.failed, keep: true) }
+    }
+
+    struct UsageResetSummary: Decodable {
+        struct Summary: Decodable {
+            let availableCount: UInt32
+            let applicableAvailableCount: UInt32?
+
+            var limitResets: LimitResets {
+                LimitResets(availableCount: Int(availableCount), redeemableCount: applicableAvailableCount.map(Int.init),
+                            grants: availableCount == 0 ? [] : nil)
+            }
+        }
+
+        let rateLimitResetCredits: Summary?
+    }
+
+    struct ResetInventory: Decodable {
+        struct Credit: Decodable {
+            let resetType: String
+            let status: String
+            let expiresAt: String?
+            let title: String?
+        }
+
+        let availableCount: UInt32
+        let credits: [Credit]
+
+        func limitResets(summary: UsageResetSummary.Summary?) -> LimitResets {
+            let grants = credits.filter { $0.status == "available" }.map {
+                LimitResets.Grant(name: $0.title ?? $0.resetType, count: 1,
+                                  expiresAt: $0.expiresAt.flatMap(QuotaRefresh.parseResetDate))
+            }
+            let redeemable = summary?.availableCount == availableCount ? summary?.applicableAvailableCount : nil
+            return LimitResets(availableCount: Int(availableCount), redeemableCount: redeemable.map(Int.init),
+                               grants: grants)
+        }
+    }
+
+    private static func resetInventory(using usageRequest: URLRequest) async -> ResetInventory? {
+        var request = usageRequest
+        request.url = URL(string: "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits")!
+        request.timeoutInterval = 5
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+        return try? QuotaRefresh.apiDecoder.decode(ResetInventory.self, from: data)
     }
 
     static func windows(from json: [String: Any]) -> [QuotaWindow]? {
